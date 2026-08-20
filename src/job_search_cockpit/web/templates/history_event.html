@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}History event · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p><a href="/history">Back to history</a></p>
+  <h1>{{ event.summary }}</h1>
+  <dl>
+    <div><dt>Time</dt><dd>{{ event.created_at.strftime("%d %b %Y, %H:%M") }}</dd></div>
+    <div><dt>Action</dt><dd>{{ event.event_type | replace("_", " ") | title }}</dd></div>
+    <div><dt>Area</dt><dd>{{ event.area | title }}</dd></div>
+    <div><dt>Source</dt><dd>{{ event.source_label }}</dd></div>
+    <div><dt>Reason</dt><dd>{{ event.reason }}</dd></div>
+    <div><dt>Supersedes</dt><dd>{{ event.supersedes }}</dd></div>
+    <div><dt>Record context</dt><dd>{{ event.origin }}</dd></div>
+  </dl>
+  <section aria-labelledby="before-heading">
+    <h2 id="before-heading">Before</h2>
+    <pre>{{ event.before }}</pre>
+  </section>
+  <section aria-labelledby="after-heading">
+    <h2 id="after-heading">After</h2>
+    <pre>{{ event.after }}</pre>
+  </section>
+{% endblock %}

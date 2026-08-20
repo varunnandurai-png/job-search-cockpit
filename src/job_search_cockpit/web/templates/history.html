@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}History · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p>Append-only record</p>
+  <h1>Decision and recovery history</h1>
+  <p>Earlier values and decisions remain traceable. Confidential details stay hidden.</p>
+  {% if rows %}
+    <ol>
+      {% for row in rows %}
+        <li>
+          <article>
+            <p><time datetime="{{ row.created_at.isoformat() }}">{{ row.created_at.strftime("%d %b %Y, %H:%M") }}</time> · {{ row.area | replace("_", " ") | title }}</p>
+            <h2><a href="/history/{{ row.id }}">{{ row.summary }}</a></h2>
+            <p>{{ row.event_type | replace("_", " ") | title }}{% if row.source_label %} · {{ row.source_label }}{% endif %}</p>
+            {% if row.sensitive %}<p>{{ redacted }}</p>{% endif %}
+          </article>
+        </li>
+      {% endfor %}
+    </ol>
+  {% else %}
+    <p role="status">No history has been recorded yet.</p>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Target profile · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p>Locked search filters</p>
+  <h1>Target job profile</h1>
+  <p>Version {{ active.version_number }} · These filters apply to every future discovery run.</p>
+  {% if error %}<p role="alert">{{ error }}</p>{% endif %}
+
+  <section aria-labelledby="roles-heading">
+    <h2 id="roles-heading">Roles and level</h2>
+    <p>{{ profile.preferred_level }}</p>
+    <ul>{% for role in profile.eligible_roles %}<li>{{ role }}</li>{% endfor %}</ul>
+  </section>
+  <section aria-labelledby="domains-heading">
+    <h2 id="domains-heading">Priority domains</h2>
+    <ul>{% for domain in profile.priority_domains %}<li>{{ domain }}</li>{% endfor %}</ul>
+  </section>
+  <section aria-labelledby="locations-heading">
+    <h2 id="locations-heading">Locations and allocation</h2>
+    <dl>
+      {% for location in profile.locations %}
+        <div>
+          <dt>{{ location }}</dt><dd>{{ profile.location_allocation[location] }}%</dd>
+          <dd>
+            {% set floor = profile.compensation_floors[location] %}
+            {% if location == "Hyderabad" %}₹46 LPA minimum{% elif location == "Bengaluru" %}₹48 LPA minimum{% else %}SGD 120,000 annual base minimum{% endif %}
+          </dd>
+        </div>
+      {% endfor %}
+    </dl>
+  </section>
+  <section aria-labelledby="difficulty-heading">
+    <h2 id="difficulty-heading">Role difficulty allocation</h2>
+    <dl>{% for key, allocation in profile.role_difficulty_allocation.items() %}<div><dt>{{ key | replace("_", " ") | title }}</dt><dd>{{ allocation }}%</dd></div>{% endfor %}</dl>
+  </section>
+  <section aria-labelledby="constraints-heading">
+    <h2 id="constraints-heading">Practical constraints and exclusions</h2>
+    <p>Notice period: {{ profile.notice_period_days }} days</p>
+    <p>Excluded employers: {{ profile.excluded_employers | join(", ") }}</p>
+    <ul>{% for exclusion in profile.excluded_role_patterns %}<li>{{ exclusion }}</li>{% endfor %}</ul>
+  </section>
+
+  <details>
+    <summary>Create a new confirmed version</summary>
+    <p>A new version preserves this one. Review the complete proposed values and provide the server-verified diff digest.</p>
+    <form method="post" action="/search-profile/new-version">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_active_version" value="{{ active.version_number }}">
+      <label for="payload-json">Proposed profile values</label>
+      <textarea id="payload-json" name="payload_json" rows="18" required>{{ payload_json }}</textarea>
+      <label for="diff-digest">Reviewed old/new diff digest</label>
+      <input id="diff-digest" name="expected_diff_digest" required>
+      <label for="profile-reason">Reason</label>
+      <textarea id="profile-reason" name="reason" required></textarea>
+      <label for="profile-confirmation">Type CREATE NEW SEARCH PROFILE VERSION</label>
+      <input id="profile-confirmation" name="confirmation" required>
+      <button class="button button--primary" type="submit">Create new profile version</button>
+    </form>
+  </details>
+  <details>
+    <summary>Earlier versions</summary>
+    <ol>{% for version in versions %}<li>Version {{ version.version_number }} — {{ version.reason }}</li>{% endfor %}</ol>
+  </details>
+{% endblock %}

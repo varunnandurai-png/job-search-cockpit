@@ -12,6 +12,7 @@ from job_search_cockpit.facts.review import ReviewService
 from job_search_cockpit.imports.service import ImportService
 from job_search_cockpit.ports import PreparedVault, ServiceBundle
 from job_search_cockpit.readiness.service import ReadinessService
+from job_search_cockpit.search_profile.service import seed_profile_v1
 from job_search_cockpit.storage.database import create_engine_for, upgrade_database
 from job_search_cockpit.storage.mutation import AppInstanceLock, MutationCoordinator
 from job_search_cockpit.web.app import create_app
@@ -33,6 +34,7 @@ def build_test_app(
     engine = create_engine_for(settings)
     lock = AppInstanceLock.acquire(settings)
     coordinator = MutationCoordinator(settings, engine, lock)
+    seed_profile_v1(coordinator)
     launch = launch or LaunchSession.fresh()
     prepared = PreparedVault(
         lock,
