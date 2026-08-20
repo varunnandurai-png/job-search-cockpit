@@ -1,8 +1,21 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from typing import Any
 
 from fastapi.testclient import TestClient
+
+from job_search_cockpit.config import Settings
+from job_search_cockpit.facts.permissions import NamedUseService, PermissionService
+from job_search_cockpit.facts.review import ReviewService
+from job_search_cockpit.imports.service import ImportService
+from job_search_cockpit.ports import PreparedVault, ServiceBundle
+from job_search_cockpit.readiness.service import ReadinessService
+from job_search_cockpit.storage.database import create_engine_for, upgrade_database
+from job_search_cockpit.storage.mutation import AppInstanceLock, MutationCoordinator
+from job_search_cockpit.web.app import create_app
+from job_search_cockpit.web.security import LaunchSession
 
 
 @dataclass(frozen=True, slots=True)
@@ -10,6 +23,36 @@ class ParsedCookie:
     httponly: bool
     samesite: str
     path: str
+
+
+@contextmanager
+def build_test_app(
+    settings: Settings, *, launch: LaunchSession | None = None
+) -> Iterator[tuple[LaunchSession, TestClient]]:
+    upgrade_database(f"sqlite:///{settings.database_path}")
+    engine = create_engine_for(settings)
+    lock = AppInstanceLock.acquire(settings)
+    coordinator = MutationCoordinator(settings, engine, lock)
+    launch = launch or LaunchSession.fresh()
+    prepared = PreparedVault(
+        lock,
+        coordinator,
+        engine,
+        ServiceBundle(
+            import_service=ImportService(settings, coordinator),
+            review_service=ReviewService(coordinator),
+            readiness_service=ReadinessService(coordinator),
+            permission_service=PermissionService(coordinator),
+            named_use_service=NamedUseService(coordinator),
+        ),
+    )
+    app = create_app(settings, prepared, launch, 8765)
+    try:
+        with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+            yield launch, client
+    finally:
+        coordinator.dispose()
+        lock.release()
 
 
 def parse_set_cookie(header: str) -> ParsedCookie:

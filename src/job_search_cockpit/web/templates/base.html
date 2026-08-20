@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Job Search Cockpit{% endblock %}</title>
+  </head>
+  <body>
+    <header>
+      <a href="/" aria-label="Job Search Cockpit home">Job Search Cockpit</a>
+      <nav aria-label="Primary navigation">
+        <a href="/">Home</a>
+      </nav>
+    </header>
+    <main id="main-content">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

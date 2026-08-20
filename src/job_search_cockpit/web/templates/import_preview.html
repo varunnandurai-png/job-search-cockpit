@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Import preview · Job Search Cockpit{% endblock %}
+{% block content %}
+  <h1>Review curated profile import</h1>
+  <p>Original files remain unchanged. The cockpit only reads them and stores traceable facts.</p>
+  <dl>
+    <div><dt>Candidate facts</dt><dd>{{ preview.candidate_count }}</dd></div>
+    <div><dt>Potential conflicts</dt><dd>{{ preview.conflict_count }}</dd></div>
+  </dl>
+  <section aria-labelledby="sources-heading">
+    <h2 id="sources-heading">Source files</h2>
+    <ul>
+      {% for source in preview.source_statuses %}
+        <li>
+          <strong>{{ source_labels[source.source_key] }}</strong>
+          <span>{{ source.status | title }}</span>
+          {% if source.message %}<span>{{ source.message }}</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% if preview.incomplete %}
+    <p role="alert">This preview is incomplete. Phase 2 will remain blocked.</p>
+  {% endif %}
+  <form method="post" action="/imports/apply">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="preview_id" value="{{ preview.id }}">
+    {% if preview.incomplete %}
+      <label><input type="checkbox" name="confirm_incomplete" value="true" required> Import the available sources and keep readiness blocked</label>
+    {% endif %}
+    <button class="button button--primary" type="submit">Import curated profile</button>
+  </form>
+{% endblock %}
