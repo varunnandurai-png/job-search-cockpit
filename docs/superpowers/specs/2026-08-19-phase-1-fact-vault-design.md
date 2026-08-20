@@ -47,7 +47,7 @@ Original source documents are read-only. An import must never edit, rename, or d
 
 ## Locked job-search profile
 
-`job-search-profile-assessment.md` is the official source for the first search-profile version. Phase 2 and later discovery runs must always apply this profile before a job can be presented as a match.
+`job-search-profile-assessment.md` is the official source for the first search-profile version. The hard gates in `job-search-cockpit-plan.md` and Varun's explicit confirmations supplement it where the two context documents differ. Phase 2 and later discovery runs must always apply the resulting versioned profile before a job can be presented as a match.
 
 ### Eligible seniority and role profiles
 
@@ -74,6 +74,12 @@ Original source documents are read-only. An import must never edit, rename, or d
 - Singapore: eligible; approximately 15% of search effort and requires employer-sponsored Employment Pass support.
 - All other locations are outside the Phase 2 search scope unless Varun explicitly approves a new search-profile version.
 
+### Role-difficulty allocation
+
+- Direct-fit roles: approximately 50% of search effort.
+- Stretch roles, especially applied AI and Lead Product Manager–IC: approximately 35% of search effort.
+- Aspirational roles, primarily through referrals: approximately 15% of search effort.
+
 ### Minimum compensation screening
 
 - Hyderabad: ₹46 LPA minimum.
@@ -84,7 +90,7 @@ Missing compensation remains `unknown` and is not automatically rejected. A job 
 
 ### Exclusions and low-priority profiles
 
-- JPMorganChase opportunities are excluded.
+- JPMorganChase opportunities are excluded. This hard gate comes from `job-search-cockpit-plan.md` and Varun's explicit confirmation; it intentionally overrides the internal-mobility suggestion in the earlier profile assessment.
 - Associate Product Manager and other junior product roles are excluded.
 - Generic Business Analyst roles are excluded.
 - Delivery-only Product Owner roles are excluded or treated as low priority when scope and compensation are not exceptional.
@@ -131,6 +137,7 @@ Every claim has a review decision:
 
 Confidentiality is separate from the review decision:
 
+- `unreviewed`: sensitivity has not yet been decided and the claim cannot be bulk-approved or used.
 - `normal`: may be used by later phases when relevant.
 - `confidential`: stays available for private reasoning but is excluded from generated documents unless Varun explicitly permits that use.
 
@@ -160,6 +167,8 @@ The importer is expected to surface, at minimum, conflicts such as:
 
 The application must not decide which version is correct. It presents the evidence and waits for Varun's decision.
 
+Resolving a conflict is a separate, explicit action. Varun selects one sourced version or supplies a correction, gives a reason, and confirms the decision. The other versions remain in history, the conflict receives a recorded resolution, and a changed source can reopen it. Ordinary approval and grouped approval cannot silently close a conflict.
+
 ## Resume correctness gate
 
 Although document generation begins in a later phase, Phase 1 establishes the mandatory rules it must follow.
@@ -186,6 +195,12 @@ The cockpit must never:
 If evidence is missing, later document generation must omit the claim and explain the resulting gap. Before a resume can be approved, Varun must receive a plain-language list of the approved facts used in it.
 
 An unresolved claim blocks generation only when that claim would be used. Unrelated approved facts remain available, while the application displays a clear vault-wide warning about outstanding review items.
+
+Permission to use a confidential claim is itself a recorded, revocable decision. It applies only to one exact approved claim revision and one named use, records who confirmed it and when, and may expire or be superseded. Permission for one claim, revision, or use never permits another.
+
+Grant, revoke, expiry, and superseding permission actions are recorded as separate append-only events. An expired permission is denied immediately and its expiry event is added during startup or normal Home-screen use.
+
+Every career claim records its employer or subject and applicable time period when those concepts apply. A correction must either retain supporting evidence or be explicitly recorded as a user-confirmed assertion. Unsupported assertions remain visible in the vault but are not resume-eligible until Varun separately confirms them as accurate and suitable for that employer and period.
 
 Zero fabricated or unresolved claims is an acceptance requirement, not a preference.
 
@@ -253,16 +268,27 @@ The design may take inspiration from the reference site's hierarchy and restrain
 - Closing the application invalidates the session.
 - There is no separate username and password in Phase 1.
 - The SQLite fact vault is stored locally and excluded from Git.
+- The application-data directory is private to the current macOS account, directories use owner-only access, and database, backup, and log files use owner-only read/write access.
 - Secrets, if later required, use macOS Keychain and are never stored in source files.
 - The browser receives only the information needed for the current review page.
 - Original documents are never modified.
 - A timestamped local safety copy is created before a database change that could affect existing decisions.
 - An interrupted or invalid import leaves the last complete vault unchanged.
+- Every import attempt is recorded as an immutable final outcome. Every committed import run records its four source statuses, hashes, manifest version, and time. Readiness uses only the latest fully committed run and never reuses a success from an older run.
+- Every imported fact is linked to its occurrence in the latest committed run. If supporting text disappears or moves to a different employer or period, the earlier fact becomes stale and ineligible until reviewed again.
+- Importing a sourced revision creates an immutable documentary-support record for that exact revision and attribution. Losing the evidence creates a superseding loss-of-support record rather than changing history.
 - Missing or unreadable sources are named clearly; available sources may still be processed.
 - Ambiguous information remains unresolved instead of being guessed.
 - The application does not send facts to an external service during Phase 1.
 - Locked search filters cannot be changed without explicit confirmation and a new version.
 - Corrections preserve the decision history and can be superseded safely.
+- Audit and decision history is protected from update or deletion at both the application and database levels.
+- Reverting a decision creates a new superseding decision; it never erases the decision being reversed.
+- Only one cockpit process may change a vault at a time. Simultaneous changes are serialized so each safety copy is the immediate predecessor of its change.
+- Restoring a backup first checks its checksum, SQLite integrity, and schema in a separate file, then replaces the active vault atomically while preserving the pre-restore vault.
+- Restore closes active database connections, handles SQLite journal files safely, reopens and rechecks the restored vault, and records the restore in a separate append-only recovery ledger so events after the restored point remain traceable.
+- The same external recovery ledger records failed import attempts when the database is unavailable and reconciles them without duplication after recovery.
+- Private browser responses disable caching, block framing, restrict executable content, escape imported text, and reject requests from unapproved browser origins.
 
 ## Chosen technical shape
 
@@ -283,7 +309,7 @@ The server-rendered approach was selected because it supports a polished interfa
 2. The application verifies the session token and opens the Home screen.
 3. Varun starts or reviews the curated-source import.
 4. The importer reads source documents without modifying them.
-5. Claims are standardized, linked to their exact source, and compared.
+5. Claims are standardized using stable keys, linked to their exact source, employer or subject, and time period, and compared.
 6. Conflicts and high-risk claims enter the individual review queue.
 7. Uncontested low-risk facts may enter the grouped-review queue.
 8. Varun approves, corrects, rejects, or marks facts confidential.
@@ -297,10 +323,12 @@ The server-rendered approach was selected because it supports a polished interfa
 - A malformed claim is shown as unresolved with its source context.
 - A duplicate import does not create duplicate active facts.
 - Re-importing a changed source creates reviewable changes rather than silently overwriting decisions.
+- A preview is tied to one browser session and exact source hashes. Any source, manifest, or session change requires a new preview.
 - A failed database update is rolled back completely.
 - A missing safety copy or failed safety-copy operation prevents a risky change.
 - An expired or absent session token denies access and instructs Varun to relaunch.
 - An unexpected error is explained in plain language and recorded locally without exposing sensitive values in logs.
+- A second cockpit process is refused safely instead of sharing the active vault.
 
 ## Main internal boundaries
 
@@ -308,10 +336,12 @@ Later implementation will keep these responsibilities separate:
 
 - **Source importer:** reads curated documents and extracts candidate claims.
 - **Conflict checker:** compares claims and identifies differences without choosing a winner.
+- **Conflict resolver:** records Varun's explicit choice or correction and can reopen a resolution when evidence changes.
 - **Fact vault:** stores claims, sources, decisions, sensitivity, and versions.
 - **Review workflow:** enforces which claims need individual attention.
 - **Search-profile manager:** preserves the locked target profile and confirmed revisions.
 - **Audit history:** records imports and decisions without deleting past events.
+- **Mutation coordinator:** serializes changes, creates the immediate safety copy, and commits or rolls back the complete operation.
 - **Readiness checker:** explains what prevents Phase 2 readiness.
 - **Local web interface:** presents the workflow in plain language.
 
@@ -341,6 +371,19 @@ Phase 1 is complete only when all of the following are demonstrated:
 18. The interface follows the approved minimalist direction and remains usable by keyboard.
 19. The final readiness report lists approved, unresolved, rejected, and confidential facts.
 20. Automated checks cover import, review, confidentiality, history, security boundaries, locked-profile versioning, and readiness behavior.
+21. Both the 40/45/15 location allocation and 50/35/15 role-difficulty allocation are preserved.
+22. Resolving a conflict requires an explicit recorded resolution; ordinary approval cannot close it.
+23. Confidential-use permission is limited to the exact claim revision and named use, and expired, revoked, or mismatched permission is denied.
+24. Readiness is derived only from the latest complete committed four-source import run, including after restart.
+25. Simultaneous changes and a second cockpit process cannot bypass backup ordering or version checks.
+26. Audit rows and prior decisions cannot be updated or deleted; reversal creates a superseding decision.
+27. Backup restoration verifies checksum, database integrity, and schema before atomic replacement.
+28. Employer and time-period attribution prevent evidence from being attached to the wrong career entry.
+29. Import preview replay, expiry, session mismatch, manifest mismatch, and source changes are rejected.
+30. Private responses are non-cacheable, imported content is escaped, and unapproved browser origins are rejected.
+31. A fact removed from the latest source run becomes stale and cannot remain resume-eligible.
+32. Potentially confidential facts remain sensitivity-unreviewed until Varun explicitly chooses normal or confidential.
+33. Restore history remains visible even when the restored database predates the restore action.
 
 ## Phase 1 completion output
 
