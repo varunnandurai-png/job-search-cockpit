@@ -85,23 +85,24 @@ def _parse_date(value: str) -> date | None:
 
 def _risk_details(claim: Claim, revision: ClaimRevision, conflict: bool) -> tuple[int, list[str]]:
     reasons: list[str] = []
+    unresolved = claim.status.value == "unresolved"
     if conflict:
         reasons.append("Sources disagree")
     if claim.sensitivity == Sensitivity.UNREVIEWED:
         reasons.append("Confidentiality not reviewed")
     if claim.sensitivity == Sensitivity.CONFIDENTIAL:
         reasons.append("Confidential")
-    if re.search(r"\d", revision.display_value):
+    if unresolved and re.search(r"\d", revision.display_value):
         reasons.append("Number requires individual review")
-    if claim.category == "dates" or claim.canonical_key.endswith(".dates"):
+    if unresolved and (claim.category == "dates" or claim.canonical_key.endswith(".dates")):
         reasons.append("Date requires individual review")
-    if claim.category == "title" or claim.canonical_key.endswith(".title"):
+    if unresolved and (claim.category == "title" or claim.canonical_key.endswith(".title")):
         reasons.append("Title requires individual review")
-    if "team" in claim.canonical_key or "team" in revision.display_value.lower():
+    if unresolved and ("team" in claim.canonical_key or "team" in revision.display_value.lower()):
         reasons.append("Team scope requires individual review")
     if claim.stale:
         reasons.append("Source is stale")
-    if not reasons and claim.status.value == "unresolved":
+    if not reasons and unresolved:
         reasons.append("Review required")
     order = {
         "Sources disagree": 0,

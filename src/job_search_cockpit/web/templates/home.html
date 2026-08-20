@@ -2,7 +2,7 @@
 {% block title %}Home · Job Search Cockpit{% endblock %}
 {% block content %}
   <p>Private career fact vault</p>
-  <h1>{% if report.ready_for_phase_2 %}Ready for Phase 2{% else %}Not ready for Phase 2{% endif %}</h1>
+  <h1>{% if report.ready_for_phase_2 %}Your verified profile is ready for Phase 2{% else %}Not ready for Phase 2{% endif %}</h1>
   <p>{{ report.next_action }}</p>
 
   <section aria-labelledby="readiness-heading">

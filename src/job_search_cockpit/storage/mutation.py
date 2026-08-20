@@ -168,6 +168,19 @@ class MutationCoordinator:
             )
             return RestoreResult(backup.backup_id, pre_restore.backup_id, restored_checksum)
 
+    def install_prepared_database(self, prepared: Path, reason: str) -> str:
+        """Atomically install a verified migrated copy while retaining rollback state."""
+        with self._mutex:
+            self._assert_available()
+            checksum = _verify_prepared_copy(prepared)
+            rollback = create_safety_copy(
+                self.settings.database_path,
+                self.settings.backup_dir,
+                reason,
+            )
+            self._replace_active_database(prepared, rollback)
+            return checksum
+
     def reconcile_import_attempt_events(self, entries: Sequence[LedgerEntry]) -> int:
         relevant = [entry.event for entry in entries if entry.event.event_type == "import_attempt"]
 

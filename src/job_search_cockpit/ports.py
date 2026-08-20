@@ -1,7 +1,15 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+
+from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    from job_search_cockpit.facts.review import BulkReviewItem
+    from job_search_cockpit.facts.types import Sensitivity
 
 T = TypeVar("T")
 
@@ -27,7 +35,7 @@ class DatabaseSession(Protocol):
 class MutationCoordinatorPort(Protocol):
     def run(
         self,
-        operation: Callable[[DatabaseSession], T],
+        operation: Callable[[Session], T],
         reason: str,
         expected_version: int | None,
     ) -> T: ...
@@ -67,12 +75,12 @@ class ReviewServicePort(Protocol):
     def set_sensitivity(
         self,
         claim_id: str,
-        sensitivity: object,
+        sensitivity: Sensitivity,
         expected_version: int,
         reason: str = "",
     ) -> object: ...
 
-    def bulk_approve_low_risk(self, items: Sequence[object]) -> object: ...
+    def bulk_approve_low_risk(self, items: Sequence[BulkReviewItem]) -> object: ...
 
 
 class ReadinessServicePort(Protocol):
