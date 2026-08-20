@@ -1,0 +1,46 @@
+{
+  "compensation_floors": {
+    "Bengaluru": {"amount": 4800000, "basis": "annual_total", "currency": "INR"},
+    "Hyderabad": {"amount": 4600000, "basis": "annual_total", "currency": "INR"},
+    "Singapore": {"amount": 120000, "basis": "annual_base", "currency": "SGD"}
+  },
+  "eligible_roles": [
+    "Senior Product Manager",
+    "Lead Product Manager — individual contributor",
+    "Selected Principal Product Manager — individual contributor",
+    "Applied AI Product Manager with domain overlap",
+    "Senior Technical Product Manager — platforms, APIs, integrations, data, fintech, lending, commerce, or fulfilment"
+  ],
+  "excluded_employers": ["JPMorganChase"],
+  "excluded_role_patterns": [
+    "Associate Product Manager and junior product roles",
+    "Generic Business Analyst",
+    "Delivery-only Product Owner without exceptional scope and compensation",
+    "Program Manager without product ownership",
+    "Director roles dependent on formal people management",
+    "Deep AI infrastructure or foundation-model platforms without domain overlap",
+    "General Singapore roles without strong domain match or sponsorship",
+    "Substantial level downgrade"
+  ],
+  "location_allocation": {"Bengaluru": 45, "Hyderabad": 40, "Singapore": 15},
+  "locations": ["Hyderabad", "Bengaluru", "Singapore"],
+  "notice_period_days": 60,
+  "preferred_level": "Senior individual contributor",
+  "priority_domains": [
+    "Digital lending, mortgage, and home buying",
+    "Banking, fintech, risk, fraud, and relevant payments",
+    "E-commerce, fulfilment, last mile, and omnichannel",
+    "Subscriptions, billing, and commerce platforms",
+    "Platforms, APIs, and partner integrations",
+    "Data, analytics, operational products, and decision support",
+    "Applied AI with existing domain overlap"
+  ],
+  "profile_change_confirmation": "CREATE NEW SEARCH PROFILE VERSION",
+  "profile_change_requires_reason": true,
+  "role_difficulty_allocation": {"aspirational": 15, "direct_fit": 50, "stretch": 35},
+  "sponsorship_requirements": {"Singapore": "Employer-sponsored Employment Pass"},
+  "title_rules": [
+    "A lateral title is acceptable only for genuine AI product scope",
+    "A substantial level downgrade is not acceptable"
+  ]
+}
