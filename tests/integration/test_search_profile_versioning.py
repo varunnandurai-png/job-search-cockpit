@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from job_search_cockpit.config import Settings
 from job_search_cockpit.search_profile.catalog import build_profile_v1
@@ -73,6 +74,19 @@ def test_confirmed_profile_change_creates_new_active_version(tmp_path: Path) -> 
         factory = session_factory_for(coordinator.engine)
         with factory() as session:
             assert get_active_profile(session).version_number == 2
+
+
+def test_profile_history_payload_cannot_be_rewritten(tmp_path: Path) -> None:
+    with _coordinator(tmp_path) as coordinator:
+        seeded = seed_profile_v1(coordinator)
+        factory = session_factory_for(coordinator.engine)
+        with (
+            pytest.raises(IntegrityError, match="history is immutable"),
+            factory.begin() as session,
+        ):
+            stored = session.get(SearchProfileVersion, seeded.id)
+            assert stored is not None
+            stored.reason = "Rewritten history"
 
 
 def test_stale_profile_change_is_rejected(tmp_path: Path) -> None:

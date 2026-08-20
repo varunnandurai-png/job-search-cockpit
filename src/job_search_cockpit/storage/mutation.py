@@ -89,6 +89,9 @@ class MutationCoordinator:
         self._session_factory: sessionmaker[Session] = session_factory_for(engine)
         self._instance_lock = instance_lock
         self._mutex = threading.RLock()
+        self._request_condition = threading.Condition()
+        self._active_requests = 0
+        self._maintenance = False
         self._disposed = False
         self.recovery_ledger = RecoveryLedger(settings.data_dir / "recovery.jsonl")
 
@@ -109,8 +112,43 @@ class MutationCoordinator:
             with self._session_factory() as session, session.begin():
                 return operation(session)
 
-    def _replace_active_database(self, prepared: Path, rollback: BackupResult) -> None:
+    def begin_request(self) -> None:
+        """Enter a request that must finish before vault replacement."""
+        with self._request_condition:
+            while self._maintenance:
+                self._request_condition.wait()
+            self._assert_available()
+            self._active_requests += 1
+
+    def end_request(self) -> None:
+        with self._request_condition:
+            if self._active_requests <= 0:
+                raise MutationUnavailable("The active request count is invalid.")
+            self._active_requests -= 1
+            if self._active_requests == 0:
+                self._request_condition.notify_all()
+
+    def _begin_maintenance(self) -> None:
+        with self._request_condition:
+            self._assert_available()
+            self._maintenance = True
+            while self._active_requests:
+                self._request_condition.wait()
+
+    def _end_maintenance(self) -> None:
+        with self._request_condition:
+            self._maintenance = False
+            self._request_condition.notify_all()
+
+    def _checkpoint_and_dispose(self) -> None:
+        with self.engine.connect() as connection:
+            checkpoint = connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)").one()
+        if int(checkpoint[0]) != 0:
+            raise MutationUnavailable("The vault is busy; restore was not started.")
         self.engine.dispose()
+
+    def _replace_active_database(self, prepared: Path, rollback: BackupResult) -> None:
+        self._checkpoint_and_dispose()
         for suffix in ("-wal", "-shm"):
             Path(f"{self.settings.database_path}{suffix}").unlink(missing_ok=True)
         try:
@@ -122,6 +160,9 @@ class MutationCoordinator:
                 if connection.exec_driver_sql("PRAGMA integrity_check").scalar_one() != "ok":
                     raise InvalidBackup("The restored vault failed its final integrity check.")
         except Exception:
+            self.engine.dispose()
+            for suffix in ("-wal", "-shm"):
+                Path(f"{self.settings.database_path}{suffix}").unlink(missing_ok=True)
             rollback_copy = self.settings.data_dir / f".rollback-{secrets.token_hex(6)}.sqlite3"
             shutil.copyfile(rollback.path, rollback_copy)
             rollback_copy.chmod(0o600)
@@ -131,42 +172,46 @@ class MutationCoordinator:
             raise
 
     def restore(self, backup_id: str, actor: str, reason: str) -> RestoreResult:
-        with self._mutex:
-            self._assert_available()
-            backup = verify_backup(self.settings.backup_dir, backup_id)
-            prepared = self.settings.data_dir / f".restore-{secrets.token_hex(8)}.sqlite3"
-            shutil.copyfile(backup.path, prepared)
-            prepared.chmod(0o600)
-            try:
-                upgrade_database(f"sqlite:///{prepared}")
-                restored_checksum = _verify_prepared_copy(prepared)
-                pre_restore = create_safety_copy(
-                    self.settings.database_path,
-                    self.settings.backup_dir,
-                    "before_restore",
+        self._begin_maintenance()
+        try:
+            with self._mutex:
+                self._assert_available()
+                backup = verify_backup(self.settings.backup_dir, backup_id)
+                prepared = self.settings.data_dir / f".restore-{secrets.token_hex(8)}.sqlite3"
+                shutil.copyfile(backup.path, prepared)
+                prepared.chmod(0o600)
+                try:
+                    upgrade_database(f"sqlite:///{prepared}")
+                    restored_checksum = _verify_prepared_copy(prepared)
+                    pre_restore = create_safety_copy(
+                        self.settings.database_path,
+                        self.settings.backup_dir,
+                        "before_restore",
+                    )
+                    self._replace_active_database(prepared, pre_restore)
+                finally:
+                    prepared.unlink(missing_ok=True)
+                self.recovery_ledger.append(
+                    RecoveryEvent(
+                        event_id=str(uuid4()),
+                        event_type="restore_completed",
+                        payload={
+                            "restore_id": str(uuid4()),
+                            "backup_id": backup.backup_id,
+                            "pre_restore_backup_id": pre_restore.backup_id,
+                            "old_vault_id": pre_restore.vault_id,
+                            "new_vault_id": backup.vault_id,
+                            "old_checksum": pre_restore.sha256,
+                            "new_checksum": restored_checksum,
+                            "actor": actor,
+                            "reason": reason,
+                        },
+                        created_at=datetime.now(UTC),
+                    )
                 )
-                self._replace_active_database(prepared, pre_restore)
-            finally:
-                prepared.unlink(missing_ok=True)
-            self.recovery_ledger.append(
-                RecoveryEvent(
-                    event_id=str(uuid4()),
-                    event_type="restore_completed",
-                    payload={
-                        "restore_id": str(uuid4()),
-                        "backup_id": backup.backup_id,
-                        "pre_restore_backup_id": pre_restore.backup_id,
-                        "old_vault_id": pre_restore.vault_id,
-                        "new_vault_id": backup.vault_id,
-                        "old_checksum": pre_restore.sha256,
-                        "new_checksum": restored_checksum,
-                        "actor": actor,
-                        "reason": reason,
-                    },
-                    created_at=datetime.now(UTC),
-                )
-            )
-            return RestoreResult(backup.backup_id, pre_restore.backup_id, restored_checksum)
+                return RestoreResult(backup.backup_id, pre_restore.backup_id, restored_checksum)
+        finally:
+            self._end_maintenance()
 
     def install_prepared_database(self, prepared: Path, reason: str) -> str:
         """Atomically install a verified migrated copy while retaining rollback state."""
@@ -183,6 +228,16 @@ class MutationCoordinator:
 
     def reconcile_import_attempt_events(self, entries: Sequence[LedgerEntry]) -> int:
         relevant = [entry.event for entry in entries if entry.event.event_type == "import_attempt"]
+        if not relevant:
+            return 0
+        event_ids = [event.event_id for event in relevant]
+        with self._session_factory() as session:
+            existing_before_backup = set(
+                session.scalars(select(ImportAttempt.id).where(ImportAttempt.id.in_(event_ids)))
+            )
+        relevant = [event for event in relevant if event.event_id not in existing_before_backup]
+        if not relevant:
+            return 0
 
         def reconcile(session: Session) -> int:
             event_ids = [event.event_id for event in relevant]

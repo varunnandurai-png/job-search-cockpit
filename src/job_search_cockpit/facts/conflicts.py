@@ -140,7 +140,12 @@ def _stored_family(claim: Claim, revision: ClaimRevision) -> str:
     return canonical
 
 
-def rebuild_conflicts(session: Session, import_run_id: str) -> ConflictSummary:
+def rebuild_conflicts(
+    session: Session,
+    import_run_id: str,
+    *,
+    close_obsolete: bool = True,
+) -> ConflictSummary:
     rows = session.execute(
         select(Claim, ClaimRevision)
         .join(ImportRunOccurrence, ImportRunOccurrence.claim_id == Claim.id)
@@ -161,6 +166,7 @@ def rebuild_conflicts(session: Session, import_run_id: str) -> ConflictSummary:
 
     open_count = 0
     reopened_count = 0
+    active_group_ids: set[str] = set()
     for (family, employer, period_start, period_end), members in families.items():
         if len({normalize_text(revision.display_value).casefold() for _, revision in members}) <= 1:
             continue
@@ -184,6 +190,7 @@ def rebuild_conflicts(session: Session, import_run_id: str) -> ConflictSummary:
             )
             session.add(group)
             session.flush()
+        active_group_ids.add(group.id)
         existing_revision_ids = set(
             session.scalars(
                 select(ConflictMember.revision_id).where(
@@ -231,6 +238,32 @@ def rebuild_conflicts(session: Session, import_run_id: str) -> ConflictSummary:
                     )
                 )
         open_count += 1
+
+    obsolete = (
+        tuple(session.scalars(select(ConflictGroup).where(ConflictGroup.status == "open")))
+        if close_obsolete
+        else ()
+    )
+    for group in obsolete:
+        if group.id in active_group_ids:
+            continue
+        previous_version = group.version
+        group.status = "resolved"
+        group.version += 1
+        session.add(
+            ConflictResolution(
+                id=str(uuid4()),
+                conflict_group_id=group.id,
+                resolution_type="closed",
+                selected_revision_id=None,
+                corrected_revision_id=None,
+                expected_group_version=previous_version,
+                reason="Current curated sources no longer disagree",
+                employer_key=group.employer_key,
+                period_start=group.period_start,
+                period_end=group.period_end,
+            )
+        )
     return ConflictSummary(open_count, reopened_count)
 
 

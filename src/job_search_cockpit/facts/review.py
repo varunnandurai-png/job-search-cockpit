@@ -68,14 +68,38 @@ class EligibilityResult:
 
 class AttributionPolicy:
     @staticmethod
-    def validate(claim: Claim, revision: ClaimRevision) -> EligibilityResult:
+    def validate(
+        claim: Claim,
+        revision: ClaimRevision,
+        support: ClaimSupportAssertion,
+    ) -> EligibilityResult:
         employment = claim.canonical_key.startswith("employment.")
-        requires_employer = employment or claim.category in {"title", "dates"}
-        requires_period = employment and claim.category in {"achievement", "responsibility"}
+        category = claim.category.casefold()
+        quantified_work = category in {
+            "achievement",
+            "metric",
+            "metrics",
+            "responsibility",
+            "responsibilities",
+            "team_scope",
+        } or claim.canonical_key.startswith(("metric.", "team_scope."))
+        requires_employer = employment or quantified_work or category in {"title", "dates"}
+        requires_period = quantified_work or (
+            employment
+            and category
+            in {"achievement", "responsibility", "responsibilities", "team_scope"}
+        )
         if requires_employer and not revision.employer_key:
             return EligibilityResult(False, "The fact has no verified employer attribution.")
         if requires_period and revision.period_start is None:
             return EligibilityResult(False, "The fact has no verified career period.")
+        if requires_employer and support.employer_key != revision.employer_key:
+            return EligibilityResult(False, "The supporting evidence names a different employer.")
+        if requires_period and (
+            support.period_start != revision.period_start
+            or support.period_end != revision.period_end
+        ):
+            return EligibilityResult(False, "The supporting evidence covers a different period.")
         return EligibilityResult(True, "Attribution is valid.")
 
 
@@ -127,7 +151,7 @@ def _candidate_for_risk(claim: Claim, revision: ClaimRevision) -> CandidateClaim
         semantic_family=claim.canonical_key,
         declared_risks=(
             frozenset({RiskFlag.POTENTIALLY_CONFIDENTIAL})
-            if claim.sensitivity is Sensitivity.UNREVIEWED
+            if claim.sensitivity is not Sensitivity.NORMAL
             else frozenset()
         ),
     )
@@ -219,6 +243,10 @@ class ReviewService:
 
         def correct_one(session: Session) -> ClaimView:
             claim = _load_claim(session, claim_id, expected_version)
+            if _open_conflict(session, claim.id):
+                raise IndividualReviewRequired(
+                    "Resolve the source conflict explicitly instead of correcting this fact."
+                )
             previous_version = claim.version
             revision = ClaimRevision(
                 id=str(uuid4()),
@@ -426,10 +454,10 @@ def is_resume_eligible(
     )
     if support is None or support.support_state != "supported":
         return EligibilityResult(False, "The active revision has no current supporting evidence.")
-    attribution = AttributionPolicy.validate(claim, revision)
+    attribution = AttributionPolicy.validate(claim, revision, support)
     if not attribution.allowed:
         return attribution
-    if _open_conflict(session, claim.id, revision.id):
+    if _open_conflict(session, claim.id):
         return EligibilityResult(False, "The fact belongs to an unresolved source conflict.")
     if claim.sensitivity is Sensitivity.UNREVIEWED:
         return EligibilityResult(False, "The fact's confidentiality has not been reviewed.")

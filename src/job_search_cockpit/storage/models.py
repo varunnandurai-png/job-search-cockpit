@@ -296,7 +296,7 @@ class ConflictResolution(Base):
     __tablename__ = "conflict_resolutions"
     __table_args__ = (
         CheckConstraint(
-            "resolution_type IN ('selected', 'corrected', 'reopened')",
+            "resolution_type IN ('selected', 'corrected', 'reopened', 'closed')",
             name="ck_conflict_resolution_type",
         ),
     )
@@ -419,6 +419,12 @@ Index(
     SourceOccurrence.statement_kind,
     SourceOccurrence.semantic_anchor,
     unique=True,
+)
+Index(
+    "uq_search_profile_single_active",
+    SearchProfileVersion.active,
+    unique=True,
+    sqlite_where=SearchProfileVersion.active.is_(True),
 )
 Index(
     "uq_claim_revision_null_safe_identity",

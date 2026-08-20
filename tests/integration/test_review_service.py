@@ -20,7 +20,11 @@ from job_search_cockpit.storage.database import (
     session_factory_for,
     upgrade_database,
 )
-from job_search_cockpit.storage.models import Claim, ClaimStatus
+from job_search_cockpit.storage.models import (
+    Claim,
+    ClaimStatus,
+    ConfidentialPermissionEvent,
+)
 from job_search_cockpit.storage.mutation import AppInstanceLock, MutationCoordinator
 from tests.support.builders import FixedClock
 
@@ -60,6 +64,48 @@ def test_conflicting_claim_cannot_be_bulk_approved(vault_settings: Settings) -> 
             review_service.bulk_approve_low_risk(
                 [BulkReviewItem(claim.id, claim.active_revision_id, claim.version)]
             )
+
+
+def test_conflicting_claim_cannot_bypass_resolution_with_ordinary_correction(
+    vault_settings: Settings,
+) -> None:
+    with _reviewed_vault(vault_settings) as (coordinator, review_service, _clock):
+        claim = _claim(coordinator, "profile.product_years")
+        with pytest.raises(IndividualReviewRequired, match="Resolve the source conflict"):
+            review_service.correct(
+                claim.id,
+                {"years": 7},
+                "7 years",
+                "fixture-employer",
+                None,
+                None,
+                claim.version,
+                "Reviewed the discrepancy",
+            )
+
+
+def test_unattributed_global_metric_is_never_resume_eligible(
+    vault_settings: Settings,
+) -> None:
+    with _reviewed_vault(vault_settings) as (coordinator, review_service, _clock):
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            claim = session.scalar(
+                select(Claim).where(Claim.canonical_key.startswith("metric."))
+            )
+            assert claim is not None
+            session.expunge(claim)
+        assert claim.active_revision_id is not None
+        approved = review_service.approve(claim.id, claim.active_revision_id, claim.version)
+        with factory() as session:
+            result = is_resume_eligible(
+                session,
+                approved.id,
+                approved.active_revision_id,
+                "resume:fixture-1",
+            )
+        assert result.allowed is False
+        assert result.reason == "The fact has no verified employer attribution."
 
 
 def test_confidential_approved_claim_is_not_eligible_without_exact_permission(
@@ -184,3 +230,38 @@ def test_expired_permission_is_denied_before_expiry_event_materializes(
             )
         assert result.allowed is False
         assert result.reason == "The confidential-use permission has expired."
+
+
+def test_due_permission_expiry_is_idempotent(vault_settings: Settings) -> None:
+    with _reviewed_vault(vault_settings) as (coordinator, review_service, _clock):
+        claim = _claim(
+            coordinator, "policy.resume.match-requirements-only-to-truthful-stored-evidence"
+        )
+        assert claim.active_revision_id is not None
+        approved = review_service.approve(claim.id, claim.active_revision_id, claim.version)
+        named_use = NamedUseService(coordinator).create(
+            "resume", "fixture-due", "Due fixture", "Varun"
+        )
+        permissions = PermissionService(coordinator)
+        grant = permissions.grant(
+            claim.id,
+            approved.active_revision_id,
+            named_use.id,
+            "Varun",
+            "GRANT CONFIDENTIAL USE",
+            datetime.now(UTC) - timedelta(seconds=1),
+            expected_event_version=0,
+        )
+
+        assert len(permissions.expire_due(datetime.now(UTC))) == 1
+        assert permissions.expire_due(datetime.now(UTC)) == ()
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            events = tuple(
+                session.scalars(
+                    select(ConfidentialPermissionEvent).where(
+                        ConfidentialPermissionEvent.permission_id == grant.permission_id
+                    )
+                )
+            )
+        assert [event.event_type for event in events] == ["grant", "expire"]

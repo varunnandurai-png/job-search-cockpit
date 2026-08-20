@@ -5,6 +5,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from job_search_cockpit.storage.database import session_factory_for
 from job_search_cockpit.storage.models import (
     AuditEvent,
     Claim,
@@ -260,12 +261,10 @@ class PermissionService:
     ) -> Sequence[ConfidentialPermissionEvent]:
         instant = _aware(now)
 
-        def expire_all(session: Session) -> Sequence[ConfidentialPermissionEvent]:
+        def due_permission_ids(session: Session) -> tuple[str, ...]:
             candidates = tuple(
                 session.scalars(
-                    select(ConfidentialPermissionEvent)
-                    .where(ConfidentialPermissionEvent.event_type.in_(("grant", "supersede")))
-                    .order_by(
+                    select(ConfidentialPermissionEvent).order_by(
                         ConfidentialPermissionEvent.permission_id,
                         ConfidentialPermissionEvent.event_version.desc(),
                     )
@@ -274,9 +273,34 @@ class PermissionService:
             latest_by_permission: dict[str, ConfidentialPermissionEvent] = {}
             for candidate in candidates:
                 latest_by_permission.setdefault(candidate.permission_id, candidate)
+            return tuple(
+                candidate.permission_id
+                for candidate in latest_by_permission.values()
+                if candidate.event_type in {"grant", "supersede"}
+                and candidate.expires_at is not None
+                and _aware(candidate.expires_at) <= instant
+            )
+
+        factory = session_factory_for(self.coordinator.engine)
+        with factory() as session:
+            due = due_permission_ids(session)
+        if not due:
+            return ()
+
+        def expire_all(session: Session) -> Sequence[ConfidentialPermissionEvent]:
             expired: list[ConfidentialPermissionEvent] = []
-            for candidate in latest_by_permission.values():
-                if candidate.expires_at is not None and _aware(candidate.expires_at) <= instant:
+            for permission_id in due:
+                candidate = session.scalar(
+                    select(ConfidentialPermissionEvent)
+                    .where(ConfidentialPermissionEvent.permission_id == permission_id)
+                    .order_by(ConfidentialPermissionEvent.event_version.desc())
+                )
+                if (
+                    candidate is not None
+                    and candidate.event_type in {"grant", "supersede"}
+                    and candidate.expires_at is not None
+                    and _aware(candidate.expires_at) <= instant
+                ):
                     expired.append(
                         self._append(
                             session,

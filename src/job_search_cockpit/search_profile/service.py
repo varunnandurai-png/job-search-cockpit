@@ -7,6 +7,7 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import Session
 
 from job_search_cockpit.search_profile.catalog import SearchProfilePayload, build_profile_v1
+from job_search_cockpit.storage.database import session_factory_for
 from job_search_cockpit.storage.models import AuditEvent, SearchProfileVersion
 from job_search_cockpit.storage.mutation import MutationCoordinator
 
@@ -38,6 +39,15 @@ def get_active_profile(session: Session) -> SearchProfileVersion:
 
 
 def seed_profile_v1(coordinator: MutationCoordinator) -> SearchProfileVersion:
+    factory = session_factory_for(coordinator.engine)
+    with factory() as session:
+        existing = session.scalar(
+            select(SearchProfileVersion).where(SearchProfileVersion.version_number == 1)
+        )
+        if existing is not None:
+            session.expunge(existing)
+            return existing
+
     def seed(session: Session) -> SearchProfileVersion:
         existing = session.scalar(
             select(SearchProfileVersion).where(SearchProfileVersion.version_number == 1)

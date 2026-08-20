@@ -198,8 +198,14 @@ class ImportService:
                     raise PreviewRejected(f"Source {spec.key} changed after preview.") from error
                 if opened.content_hash != status.content_hash:
                     raise PreviewRejected(f"Source {spec.key} changed after preview.")
-            elif spec.path.exists():
-                raise PreviewRejected(f"Source {spec.key} changed after preview.")
+            elif status.status == "malformed":
+                raise PreviewRejected(
+                    f"Source {spec.key} is malformed and cannot be partially imported."
+                )
+            else:
+                current, _result = self._read(spec)
+                if current.status != status.status or current.message != status.message:
+                    raise PreviewRejected(f"Source {spec.key} changed after preview.")
 
     @staticmethod
     def _find_or_create_document(session: Session, candidate: CandidateClaim) -> SourceDocument:
@@ -471,7 +477,7 @@ class ImportService:
                             )
             from job_search_cockpit.facts.conflicts import rebuild_conflicts
 
-            rebuild_conflicts(session, run_id)
+            rebuild_conflicts(session, run_id, close_obsolete=run.complete)
             return run_id, created_claims, created_revisions, tuple(sorted(changed)), tuple(stale)
 
         return self.coordinator.run(apply_import, "curated_import", expected_version=None)
@@ -499,7 +505,7 @@ class ImportService:
                     outcome=outcome,
                     source_statuses_json=statuses,
                     failure_class=type(failure).__name__ if failure else None,
-                    redacted_message=str(failure)[:240] if failure else None,
+                    redacted_message=self._redacted_failure(failure),
                     session_fingerprint=sha256(session_id.encode()).hexdigest(),
                     created_at=datetime.now(UTC),
                 )
@@ -520,7 +526,65 @@ class ImportService:
                         "outcome": outcome,
                         "source_statuses": statuses,
                         "failure_class": type(failure).__name__ if failure else "",
-                        "redacted_message": str(failure)[:240] if failure else "",
+                        "redacted_message": self._redacted_failure(failure) or "",
+                        "session_fingerprint": sha256(session_id.encode()).hexdigest(),
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
+            return attempt_id
+
+    def _redacted_failure(self, failure: Exception | None) -> str | None:
+        if failure is None:
+            return None
+        if isinstance(failure, PreviewRejected):
+            return "Import preview rejected by safety checks."
+        return "Import failed safely; no claims were committed."
+
+    def _record_unavailable_attempt(
+        self,
+        preview_id: str,
+        session_id: str,
+        failure: PreviewRejected,
+    ) -> str:
+        attempt_id = str(uuid4())
+        statuses = {
+            source.key: {"status": "unavailable", "content_hash": None}
+            for source in self.settings.sources
+        }
+
+        def record(session: Session) -> str:
+            session.add(
+                ImportAttempt(
+                    id=attempt_id,
+                    preview_id=preview_id,
+                    candidate_digest="0" * 64,
+                    manifest_version=MANIFEST_VERSION,
+                    outcome="rejected",
+                    source_statuses_json=statuses,
+                    failure_class=type(failure).__name__,
+                    redacted_message=self._redacted_failure(failure),
+                    session_fingerprint=sha256(session_id.encode()).hexdigest(),
+                    created_at=datetime.now(UTC),
+                )
+            )
+            return attempt_id
+
+        try:
+            return self.coordinator.run(record, "record_import_attempt", expected_version=None)
+        except Exception:
+            self.coordinator.recovery_ledger.append(
+                RecoveryEvent(
+                    event_id=attempt_id,
+                    event_type="import_attempt",
+                    payload={
+                        "preview_id": preview_id,
+                        "candidate_digest": "0" * 64,
+                        "manifest_version": MANIFEST_VERSION,
+                        "outcome": "rejected",
+                        "source_statuses": statuses,
+                        "failure_class": type(failure).__name__,
+                        "redacted_message": self._redacted_failure(failure) or "",
                         "session_fingerprint": sha256(session_id.encode()).hexdigest(),
                     },
                     created_at=datetime.now(UTC),
@@ -537,18 +601,30 @@ class ImportService:
         confirm_incomplete: bool = False,
     ) -> AppliedImport:
         del now
-        snapshot = self._consume_preview(preview_id, session_id)
+        try:
+            snapshot = self._consume_preview(preview_id, session_id)
+        except PreviewRejected as error:
+            with self._preview_lock:
+                known_snapshot = self._previews.get(preview_id)
+            if known_snapshot is None:
+                self._record_unavailable_attempt(preview_id, session_id, error)
+            else:
+                self._record_attempt(known_snapshot, session_id, "rejected", error)
+            raise
         if snapshot.preview.incomplete and not confirm_incomplete:
-            error = PreviewRejected("An incomplete import requires explicit confirmation.")
-            self._record_attempt(snapshot, session_id, "rejected", error)
-            raise error
+            incomplete_error = PreviewRejected(
+                "An incomplete import requires explicit confirmation."
+            )
+            self._record_attempt(snapshot, session_id, "rejected", incomplete_error)
+            raise incomplete_error
         try:
             self._revalidate_sources(snapshot)
             run_id, created_claims, created_revisions, changed, stale = self._apply_snapshot(
                 snapshot
             )
         except Exception as error:
-            self._record_attempt(snapshot, session_id, "failed", error)
+            outcome = "rejected" if isinstance(error, PreviewRejected) else "failed"
+            self._record_attempt(snapshot, session_id, outcome, error)
             raise
         attempt_id = self._record_attempt(snapshot, session_id, "committed", None)
         return AppliedImport(

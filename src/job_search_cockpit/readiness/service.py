@@ -28,6 +28,9 @@ class ReadinessReport:
     unsupported_approved: int
     latest_import_complete: bool
     active_profile_version: int | None
+    approved: int
+    rejected: int
+    confidential: int
     next_action: str
 
 
@@ -71,6 +74,19 @@ class ReadinessService:
                     )
                 )
             )
+            approved = len(approved_claims)
+            rejected = self._count(
+                session,
+                select(func.count())
+                .select_from(Claim)
+                .where(Claim.status == ClaimStatus.REJECTED),
+            )
+            confidential = self._count(
+                session,
+                select(func.count())
+                .select_from(Claim)
+                .where(Claim.sensitivity == Sensitivity.CONFIDENTIAL),
+            )
             unsupported_approved = 0
             for claim in approved_claims:
                 support = session.scalar(
@@ -85,9 +101,7 @@ class ReadinessService:
                     unsupported_approved += 1
 
             latest = session.scalar(
-                select(ImportRun)
-                .where(ImportRun.status == "committed")
-                .order_by(ImportRun.committed_at.desc(), ImportRun.id.desc())
+                select(ImportRun).order_by(ImportRun.committed_at.desc(), ImportRun.id.desc())
             )
             latest_import_complete = False
             if latest is not None and latest.complete:
@@ -121,13 +135,16 @@ class ReadinessService:
         )
         ready = not any(blocked for blocked, _message in blockers)
         return ReadinessReport(
-            ready,
-            unresolved,
-            sensitivity_unreviewed,
-            stale,
-            open_conflicts,
-            unsupported_approved,
-            latest_import_complete,
-            profile_version,
-            next_action,
+            ready_for_phase_2=ready,
+            unresolved=unresolved,
+            sensitivity_unreviewed=sensitivity_unreviewed,
+            stale=stale,
+            open_conflicts=open_conflicts,
+            unsupported_approved=unsupported_approved,
+            latest_import_complete=latest_import_complete,
+            active_profile_version=profile_version,
+            approved=approved,
+            rejected=rejected,
+            confidential=confidential,
+            next_action=next_action,
         )

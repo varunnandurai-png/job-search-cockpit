@@ -142,3 +142,72 @@ def test_identical_reimport_does_not_reopen_resolved_conflict(vault_settings: Se
             assert group is not None
             assert group.status == "resolved"
             assert group.version == resolved.version
+
+
+def test_open_conflict_closes_when_current_source_disagreement_disappears(
+    vault_settings: Settings,
+) -> None:
+    with _imported_vault(vault_settings) as (coordinator, service, clock):
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            group = session.scalar(
+                select(ConflictGroup).where(
+                    ConflictGroup.semantic_family == "profile.product_years",
+                    ConflictGroup.status == "open",
+                )
+            )
+            assert group is not None
+            group_id = group.id
+        assessment = next(
+            source.path for source in vault_settings.sources if source.key == "assessment"
+        )
+        assessment.write_text(
+            "# Assessment\n\nRecommended search allocation remains unchanged.\n",
+            encoding="utf-8",
+        )
+        service.apply(service.preview("session-1", clock.now()).id, "session-1", clock.now())
+
+        with factory() as session:
+            group = session.get(ConflictGroup, group_id)
+            assert group is not None and group.status == "resolved"
+            closure = session.scalar(
+                select(ConflictResolution).where(
+                    ConflictResolution.conflict_group_id == group_id,
+                    ConflictResolution.resolution_type == "closed",
+                )
+            )
+            assert closure is not None
+
+
+def test_incomplete_import_cannot_close_a_conflict_from_an_unavailable_source(
+    vault_settings: Settings,
+) -> None:
+    with _imported_vault(vault_settings) as (coordinator, service, clock):
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            group = session.scalar(
+                select(ConflictGroup).where(
+                    ConflictGroup.semantic_family == "profile.product_years",
+                    ConflictGroup.status == "open",
+                )
+            )
+            assert group is not None
+            group_id = group.id
+        profile = next(
+            source.path for source in vault_settings.sources if source.key == "profile_json"
+        )
+        original = profile.read_text(encoding="utf-8")
+        profile.unlink()
+        incomplete = service.preview("session-1", clock.now())
+        service.apply(
+            incomplete.id,
+            "session-1",
+            clock.now(),
+            confirm_incomplete=True,
+        )
+        profile.write_text(original, encoding="utf-8")
+        service.apply(service.preview("session-1", clock.now()).id, "session-1", clock.now())
+
+        with factory() as session:
+            group = session.get(ConflictGroup, group_id)
+            assert group is not None and group.status == "open"

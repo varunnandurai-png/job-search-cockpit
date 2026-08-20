@@ -1,4 +1,3 @@
-import shutil
 import socket
 import sqlite3
 import sys
@@ -19,6 +18,7 @@ from job_search_cockpit.imports.service import ImportService
 from job_search_cockpit.ports import PreparedVault, ServiceBundle
 from job_search_cockpit.readiness.service import ReadinessService
 from job_search_cockpit.search_profile.service import seed_profile_v1
+from job_search_cockpit.storage.backup import copy_database_online
 from job_search_cockpit.storage.database import create_engine_for, upgrade_database
 from job_search_cockpit.storage.mutation import AppInstanceLock, MutationCoordinator
 from job_search_cockpit.storage.recovery_ledger import InvalidRecoveryLedger
@@ -69,8 +69,7 @@ def _upgrade_existing(
         )
     prepared = settings.data_dir / ".upgrade-prepared.sqlite3"
     prepared.unlink(missing_ok=True)
-    shutil.copyfile(settings.database_path, prepared)
-    prepared.chmod(0o600)
+    copy_database_online(settings.database_path, prepared)
     try:
         upgrade_database(f"sqlite:///{prepared}")
         _integrity, upgraded_version = _sqlite_state(prepared)
@@ -211,6 +210,12 @@ def main() -> int:
         print("Stopping Job Search Cockpit safely.")
         server.should_exit = True
         thread.join(timeout=10)
+        if thread.is_alive():
+            server.force_exit = True
+            thread.join(timeout=10)
+        if thread.is_alive():
+            print("The local server did not stop; the vault lock will remain held until exit.")
+            return 1
         return 0
     except Exception as error:
         print(f"The cockpit stopped before opening: {error}")
@@ -218,7 +223,8 @@ def main() -> int:
         thread.join(timeout=10)
         return 1
     finally:
-        plan.close()
+        if not thread.is_alive():
+            plan.close()
 
 
 if __name__ == "__main__":

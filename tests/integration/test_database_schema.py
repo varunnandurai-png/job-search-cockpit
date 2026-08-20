@@ -71,6 +71,9 @@ def test_migration_installs_update_and_delete_guards_for_immutable_tables(
         f"prevent_{table}_{operation}"
         for table in immutable_tables
         for operation in ("update", "delete")
+    } | {
+        "prevent_search_profile_versions_delete",
+        "prevent_search_profile_versions_history_update",
     }
 
 

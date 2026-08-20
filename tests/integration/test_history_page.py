@@ -38,6 +38,8 @@ def test_history_list_and_detail_redact_confidential_values(vault_settings):
         detail = client.get(f"/history/{event.id}")
         assert detail.status_code == 200
         assert "private-after" not in detail.text
+        assert "Fixture reason" not in detail.text
+        assert "Sanitized source" not in detail.text
         assert "Confidential value hidden" in detail.text
 
 

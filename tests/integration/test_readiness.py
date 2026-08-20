@@ -37,3 +37,29 @@ def test_readiness_uses_latest_complete_run_and_reports_review_counts(
         assert report.open_conflicts >= 2
         assert report.latest_import_complete is True
         assert report.active_profile_version == 1
+
+
+def test_newer_incomplete_run_blocks_readiness_even_after_complete_run(
+    vault_settings: Settings,
+) -> None:
+    with _vault(vault_settings) as (coordinator, clock):
+        seed_profile_v1(coordinator)
+        importer = ImportService(vault_settings, coordinator, monotonic_clock=clock.monotonic_now)
+        importer.apply(importer.preview("session-1", clock.now()).id, "session-1", clock.now())
+        missing_source = next(
+            source.path for source in vault_settings.sources if source.key == "assessment"
+        )
+        missing_source.unlink()
+        clock.advance(seconds=1)
+        preview = importer.preview("session-1", clock.now())
+        importer.apply(
+            preview.id,
+            "session-1",
+            clock.now(),
+            confirm_incomplete=True,
+        )
+
+        report = ReadinessService(coordinator).report()
+        assert report.latest_import_complete is False
+        assert report.ready_for_phase_2 is False
+        assert report.next_action == "Import all four curated sources."

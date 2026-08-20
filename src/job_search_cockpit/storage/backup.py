@@ -14,6 +14,25 @@ class BackupError(RuntimeError):
     """Raised when a verified safety copy cannot be created."""
 
 
+def copy_database_online(source_path: Path, destination_path: Path) -> None:
+    """Copy a live SQLite database, including committed WAL content."""
+    if destination_path.exists():
+        raise BackupError("The database-copy destination already exists.")
+    descriptor = os.open(destination_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(descriptor)
+    try:
+        source_uri = f"file:{source_path}?mode=ro"
+        with (
+            sqlite3.connect(source_uri, uri=True) as source,
+            sqlite3.connect(destination_path) as destination,
+        ):
+            source.backup(destination, pages=128, sleep=0.01)
+        destination_path.chmod(0o600)
+    except Exception as error:
+        destination_path.unlink(missing_ok=True)
+        raise BackupError("The live database could not be copied safely.") from error
+
+
 @dataclass(frozen=True, slots=True)
 class BackupResult:
     backup_id: str
@@ -97,16 +116,8 @@ def create_safety_copy(database_path: Path, backup_dir: Path, reason: str) -> Ba
     backup_path = backup_dir / f"{backup_id}.sqlite3"
     manifest_path = backup_dir / f"{backup_id}.json"
 
-    descriptor = os.open(backup_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
-    os.close(descriptor)
     try:
-        source_uri = f"file:{database_path}?mode=ro"
-        with (
-            sqlite3.connect(source_uri, uri=True) as source,
-            sqlite3.connect(backup_path) as destination,
-        ):
-            source.backup(destination, pages=128, sleep=0.01)
-        backup_path.chmod(0o600)
+        copy_database_online(database_path, backup_path)
         alembic_revision = _database_metadata(backup_path)
         checksum = sha256(backup_path.read_bytes()).hexdigest()
         result = BackupResult(

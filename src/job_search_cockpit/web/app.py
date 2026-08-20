@@ -6,10 +6,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
 
 from job_search_cockpit.config import Settings
 from job_search_cockpit.ports import PreparedVault
+from job_search_cockpit.storage.mutation import MutationCoordinator
 from job_search_cockpit.web.routes import history, home, imports, review, search_profile
 from job_search_cockpit.web.security import LaunchSession
 
@@ -78,8 +80,15 @@ def create_app(
             )
             if not (exact_origin or same_origin_navigation):
                 return _secured(PlainTextResponse("Invalid request origin.", status_code=403))
-        response = await call_next(request)
-        return _secured(response)
+        coordinator = prepared.coordinator
+        if not isinstance(coordinator, MutationCoordinator):
+            return _secured(PlainTextResponse("Vault coordinator unavailable.", status_code=503))
+        await run_in_threadpool(coordinator.begin_request)
+        try:
+            response = await call_next(request)
+            return _secured(response)
+        finally:
+            await run_in_threadpool(coordinator.end_request)
 
     app.include_router(home.router)
     app.include_router(imports.router)

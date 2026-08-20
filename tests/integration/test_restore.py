@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 import pytest
@@ -52,5 +53,39 @@ def test_corrupt_backup_is_rejected_without_changing_active_vault(tmp_path: Path
             coordinator.restore(backup.backup_id, actor="Varun", reason="test restore")
         assert count_rows(settings.database_path, "alembic_version") == 1
     finally:
+        coordinator.dispose()
+        lock.release()
+
+
+def test_restore_waits_for_active_request_to_drain(tmp_path: Path) -> None:
+    settings = Settings.for_tests(tmp_path / "data", tmp_path / "sources")
+    upgrade_database(f"sqlite:///{settings.database_path}")
+    backup = create_safety_copy(settings.database_path, settings.backup_dir, "known_good")
+    engine = create_engine_for(settings)
+    lock = AppInstanceLock.acquire(settings)
+    coordinator = MutationCoordinator(settings, engine, lock)
+    failures: list[BaseException] = []
+
+    def restore() -> None:
+        try:
+            coordinator.restore(backup.backup_id, actor="Varun", reason="drain fixture")
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=restore)
+    try:
+        coordinator.begin_request()
+        try:
+            thread.start()
+            thread.join(timeout=0.1)
+            assert thread.is_alive()
+        finally:
+            coordinator.end_request()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert failures == []
+    finally:
+        if thread.is_alive():
+            thread.join(timeout=5)
         coordinator.dispose()
         lock.release()

@@ -100,8 +100,10 @@ def show_history_event(request: Request, event_id: str) -> Response:
                 "area": event.area,
                 "summary": event.summary,
                 "created_at": event.created_at,
-                "source_label": event.source_label or "Not recorded",
-                "reason": event.reason or "Not recorded",
+                "source_label": (
+                    REDACTED if event.sensitive else event.source_label or "Not recorded"
+                ),
+                "reason": REDACTED if event.sensitive else event.reason or "Not recorded",
                 "supersedes": event.supersedes_event_id or "None",
                 "before": REDACTED if event.sensitive else _safe_json(event.before_json),
                 "after": REDACTED if event.sensitive else _safe_json(event.after_json),
