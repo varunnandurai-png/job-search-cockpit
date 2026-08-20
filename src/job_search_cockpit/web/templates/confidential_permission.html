@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Confidential use · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p><a href="/review/{{ claim.id }}">Back to fact</a></p>
+  <h1>Permit one exact confidential use</h1>
+  <p>This permission applies only to this fact revision and the named use below. It does not change the factual decision or confidentiality.</p>
+  <form method="post" action="/review/{{ claim.id }}/confidential-use">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="revision_id" value="{{ claim.active_revision_id }}">
+    <label for="purpose-type">Purpose type</label>
+    <select id="purpose-type" name="purpose_type"><option value="resume">Resume</option><option value="application">Application</option></select>
+    <label for="external-reference">External reference</label>
+    <input id="external-reference" name="external_reference" required>
+    <label for="description">Description</label>
+    <textarea id="description" name="description" required></textarea>
+    <label for="expires-at">Optional expiry</label>
+    <input id="expires-at" name="expires_at" type="datetime-local">
+    <label for="permission-confirmation">Type GRANT CONFIDENTIAL USE</label>
+    <input id="permission-confirmation" name="confirmation" required>
+    <button class="button button--primary" type="submit">Grant exact-use permission</button>
+  </form>
+  <section aria-labelledby="events-heading">
+    <h2 id="events-heading">Permission history</h2>
+    {% if permission_events %}
+      <ol>
+        {% for event in permission_events %}
+          <li>
+            {{ event.event_type | title }} · version {{ event.event_version }}
+            {% if event.event_type in ["grant", "supersede"] %}
+              <form method="post" action="/confidential-use/{{ event.id }}/revoke">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="expected_event_version" value="{{ event.event_version }}">
+                <label for="revoke-{{ event.id }}">Reason</label>
+                <input id="revoke-{{ event.id }}" name="reason" required>
+                <button type="submit">Revoke permission</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p>No permission has been granted.</p>
+    {% endif %}
+  </section>
+{% endblock %}

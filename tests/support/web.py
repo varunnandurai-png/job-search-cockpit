@@ -67,15 +67,30 @@ def parse_set_cookie(header: str) -> ParsedCookie:
 
 
 class AuthenticatedClient:
-    def __init__(self, client: TestClient, csrf: str) -> None:
+    def __init__(self, client: TestClient, csrf: str, origin: str) -> None:
         self.client = client
         self.csrf = csrf
+        self.origin = origin
 
     def get(self, *args: object, **kwargs: object) -> Any:
         return self.client.get(*args, **kwargs)
 
     def post(self, *args: object, **kwargs: object) -> Any:
+        data = dict(kwargs.pop("data", {}) or {})
+        data.setdefault("csrf_token", self.csrf)
+        kwargs["data"] = data
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.setdefault("origin", self.origin)
+        kwargs["headers"] = headers
         return self.client.post(*args, **kwargs)
+
+
+@contextmanager
+def authenticated_test_app(settings: Settings) -> Iterator[AuthenticatedClient]:
+    with build_test_app(settings) as (launch, client):
+        response = client.get(f"/launch?token={launch.token}")
+        assert response.status_code == 200
+        yield AuthenticatedClient(client, launch.csrf_token, "http://127.0.0.1:8765")
 
 
 @dataclass(slots=True)

@@ -9,7 +9,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from job_search_cockpit.config import Settings
 from job_search_cockpit.ports import PreparedVault
-from job_search_cockpit.web.routes import home, imports
+from job_search_cockpit.web.routes import home, imports, review
 from job_search_cockpit.web.security import LaunchSession
 
 
@@ -71,4 +71,5 @@ def create_app(
 
     app.include_router(home.router)
     app.include_router(imports.router)
+    app.include_router(review.router)
     return app
