@@ -1,9 +1,13 @@
+import socket
+import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from typing import Any
 
+import uvicorn
 from fastapi.testclient import TestClient
 
 from job_search_cockpit.config import Settings
@@ -100,6 +104,66 @@ class RunningApp:
     launch_url: str
     base_url: str
     stop: Any
+
+
+@contextmanager
+def running_test_app(settings: Settings) -> Iterator[RunningApp]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(128)
+    port = int(listener.getsockname()[1])
+    upgrade_database(f"sqlite:///{settings.database_path}")
+    engine = create_engine_for(settings)
+    lock = AppInstanceLock.acquire(settings)
+    coordinator = MutationCoordinator(settings, engine, lock)
+    seed_profile_v1(coordinator)
+    launch = LaunchSession.fresh()
+    prepared = PreparedVault(
+        lock,
+        coordinator,
+        engine,
+        ServiceBundle(
+            import_service=ImportService(settings, coordinator),
+            review_service=ReviewService(coordinator),
+            readiness_service=ReadinessService(coordinator),
+            permission_service=PermissionService(coordinator),
+            named_use_service=NamedUseService(coordinator),
+        ),
+    )
+    app = create_app(settings, prepared, launch, port)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not server.started:
+        server.should_exit = True
+        thread.join(timeout=2)
+        listener.close()
+        coordinator.dispose()
+        lock.release()
+        raise RuntimeError("The test web server did not start.")
+
+    stopped = False
+
+    def stop() -> None:
+        nonlocal stopped
+        if stopped:
+            return
+        stopped = True
+        server.should_exit = True
+        thread.join(timeout=5)
+        listener.close()
+        coordinator.dispose()
+        lock.release()
+
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        yield RunningApp(f"{base_url}/launch?token={launch.token}", base_url, stop)
+    finally:
+        stop()
 
 
 def assert_accessible_page(page: Any) -> None:

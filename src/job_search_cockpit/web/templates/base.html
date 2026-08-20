@@ -4,19 +4,24 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Job Search Cockpit{% endblock %}</title>
+    <link rel="stylesheet" href="/static/app.css">
   </head>
   <body>
-    <header>
-      <a href="/" aria-label="Job Search Cockpit home">Job Search Cockpit</a>
-      <nav aria-label="Primary navigation">
-        <a href="/">Home</a>
-        <a href="/review">Review facts</a>
-        <a href="/search-profile">Target profile</a>
-        <a href="/history">History</a>
-      </nav>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="wordmark" href="/" aria-label="Job Search Cockpit home">Job Search Cockpit</a>
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <a href="/">Home</a>
+          <a href="/review">Review facts</a>
+          <a href="/search-profile">Target profile</a>
+          <a href="/history">History</a>
+        </nav>
+      </div>
     </header>
-    <main id="main-content">
+    <main class="shell" id="main-content" tabindex="-1">
       {% block content %}{% endblock %}
     </main>
+    <footer class="site-footer"><p>Private, local, and read-only toward your source documents.</p></footer>
   </body>
 </html>

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -63,8 +64,19 @@ def create_app(
         ):
             return _secured(PlainTextResponse("Launch session required.", status_code=401))
         if request.method == "POST":
-            expected_origin = f"http://{expected_host}"
-            if request.headers.get("origin") != expected_origin:
+            origin = request.headers.get("origin", "")
+            parsed_origin = urlsplit(origin)
+            exact_origin = (
+                parsed_origin.scheme == "http"
+                and parsed_origin.hostname == "127.0.0.1"
+                and parsed_origin.port == active_port
+            )
+            same_origin_navigation = (
+                origin == "null"
+                and request.headers.get("sec-fetch-site") == "same-origin"
+                and request.headers.get("sec-fetch-mode") == "navigate"
+            )
+            if not (exact_origin or same_origin_navigation):
                 return _secured(PlainTextResponse("Invalid request origin.", status_code=403))
         response = await call_next(request)
         return _secured(response)
