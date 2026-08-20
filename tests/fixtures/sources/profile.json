@@ -1,0 +1,34 @@
+{
+  "contact": {
+    "name": "Test Candidate",
+    "email": "candidate@example.test",
+    "phone": "+91 90000 00000"
+  },
+  "summary": "Senior product manager with eight years in product ownership.",
+  "years_experience": 11,
+  "pm_years": 8,
+  "experience": [
+    {
+      "company": "JPMorganChase",
+      "location": "Hyderabad, India",
+      "title": "Senior Product Associate (Product Manager)",
+      "dates": "June 2024 - Present",
+      "bullets": [
+        "Own the Home Discovery roadmap across 5 scrum teams.",
+        "Improved application conversion from 2-3% to 5-7%."
+      ]
+    },
+    {
+      "company": "Example Commerce",
+      "location": "Bengaluru, India",
+      "title": "Senior Product Manager",
+      "dates": "July 2021 - June 2024",
+      "bullets": [
+        "Led last-mile platform modernization supporting $250M annual GMV."
+      ]
+    }
+  ],
+  "education": ["Example School — MBA · 2013 - 2015"],
+  "certifications": ["Professional Scrum Product Owner I"],
+  "languages": ["English (Full Professional)"]
+}
