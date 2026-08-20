@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from job_search_cockpit.config import Settings, SourceKind, SourceSpec
+from job_search_cockpit.facts.conflicts import analyze_candidate_conflicts
 from job_search_cockpit.facts.types import RiskFlag, Sensitivity
 from job_search_cockpit.imports.assessment import AssessmentImporter
 from job_search_cockpit.imports.master_profile import MasterProfileImporter
@@ -155,7 +156,7 @@ class ImportService:
             source_statuses=tuple(statuses),
             candidate_digest=digest,
             candidate_count=len(candidates),
-            conflict_count=0,
+            conflict_count=analyze_candidate_conflicts(candidates).count,
             created_at=now,
             expires_at=now + timedelta(minutes=10),
             incomplete=any(status.status != "ready" for status in statuses),
@@ -468,6 +469,9 @@ class ImportService:
                                     ),
                                 )
                             )
+            from job_search_cockpit.facts.conflicts import rebuild_conflicts
+
+            rebuild_conflicts(session, run_id)
             return run_id, created_claims, created_revisions, tuple(sorted(changed)), tuple(stale)
 
         return self.coordinator.run(apply_import, "curated_import", expected_version=None)
