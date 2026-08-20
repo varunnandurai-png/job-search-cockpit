@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Review fact · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p><a href="/review">Back to review queue</a></p>
+  <h1>{{ claim.subject }}</h1>
+  {% if error %}<p role="alert">{{ error }}</p>{% endif %}
+  <p>{{ revisions | selectattr("id", "equalto", claim.active_revision_id) | map(attribute="display_value") | first }}</p>
+  <dl>
+    <div><dt>Decision</dt><dd>{{ claim.status.value | title }}</dd></div>
+    <div><dt>Confidentiality</dt><dd>{{ claim.sensitivity.value | title }}</dd></div>
+    <div><dt>Employer</dt><dd>{{ revisions | selectattr("id", "equalto", claim.active_revision_id) | map(attribute="employer_key") | first or "Not applicable" }}</dd></div>
+  </dl>
+
+  {% if group %}
+    <section aria-labelledby="conflict-heading">
+      <h2 id="conflict-heading">These sources disagree</h2>
+      <p>Choose one sourced version or supply a correction. The cockpit will not choose for you.</p>
+      <form method="post" action="/review/{{ claim.id }}/resolve-conflict">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="group_id" value="{{ group.id }}">
+        <input type="hidden" name="expected_group_version" value="{{ group.version }}">
+        {% for row in conflict_rows %}
+          <fieldset>
+            <legend>{{ row.revision.display_value }}</legend>
+            {% for evidence in row.evidence %}
+              <p>{{ evidence.source_key | replace("_", " ") | title }} · {{ evidence.locator }}</p>
+            {% endfor %}
+            <label><input type="radio" name="selected_revision_id" value="{{ row.revision.id }}"> Select this version</label>
+          </fieldset>
+        {% endfor %}
+        <label for="conflict-correction">Or corrected wording</label>
+        <textarea id="conflict-correction" name="corrected_display_value"></textarea>
+        <label for="conflict-reason">Reason</label>
+        <textarea id="conflict-reason" name="reason" required></textarea>
+        <button class="button button--primary" type="submit">Resolve conflict</button>
+      </form>
+    </section>
+  {% else %}
+    <section aria-labelledby="sources-heading">
+      <h2 id="sources-heading">Source versions</h2>
+      {% for revision in revisions %}
+        <article>
+          <h3>{{ revision.display_value }}</h3>
+          {% for evidence in evidence_by_revision[revision.id] %}
+            <p>{{ evidence.source_key | replace("_", " ") | title }} · {{ evidence.locator }}</p>
+            <blockquote>{{ evidence.excerpt }}</blockquote>
+          {% endfor %}
+        </article>
+      {% endfor %}
+    </section>
+    <form method="post" action="/review/{{ claim.id }}/approve">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="revision_id" value="{{ claim.active_revision_id }}">
+      <input type="hidden" name="expected_version" value="{{ claim.version }}">
+      <button class="button button--primary" type="submit">Approve fact</button>
+    </form>
+  {% endif %}
+
+  <section aria-labelledby="confidentiality-heading">
+    <h2 id="confidentiality-heading">Confidentiality</h2>
+    {% if claim.sensitivity.value == "confidential" %}
+      <p>Exact permission is required for later resume use.</p>
+      <a href="/review/{{ claim.id }}/confidential-use/new">Manage exact-use permissions</a>
+    {% else %}
+      <p>Marking this confidential prevents later resume use without exact permission.</p>
+    {% endif %}
+    <form method="post" action="/review/{{ claim.id }}/sensitivity">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_version" value="{{ claim.version }}">
+      <label for="sensitivity">Confidentiality choice</label>
+      <select id="sensitivity" name="sensitivity">
+        <option value="normal">Normal</option>
+        <option value="confidential">Confidential</option>
+      </select>
+      <button type="submit">Save confidentiality</button>
+    </form>
+  </section>
+
+  <details>
+    <summary>Correct or reject this fact</summary>
+    <form method="post" action="/review/{{ claim.id }}/correct">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_version" value="{{ claim.version }}">
+      <label for="display-value">Correct wording</label>
+      <textarea id="display-value" name="display_value" required>{{ submitted_value }}</textarea>
+      <label for="correction-reason">Reason</label>
+      <textarea id="correction-reason" name="reason" required></textarea>
+      <button type="submit">Save correction</button>
+    </form>
+    <form method="post" action="/review/{{ claim.id }}/reject">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="expected_version" value="{{ claim.version }}">
+      <label for="reject-reason">Rejection reason</label>
+      <textarea id="reject-reason" name="reason" required></textarea>
+      <button type="submit">Reject fact</button>
+    </form>
+  </details>
+
+  {% if claim.status.value == "corrected" %}
+    <form method="post" action="/review/{{ claim.id }}/confirm-corrected-support">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="revision_id" value="{{ claim.active_revision_id }}">
+      <input type="hidden" name="expected_version" value="{{ claim.version }}">
+      <label for="support-confirmation">Type CONFIRM CORRECTED FACT SUPPORT</label>
+      <input id="support-confirmation" name="confirmation" required>
+      <label for="support-reason">Support reason</label>
+      <textarea id="support-reason" name="reason" required></textarea>
+      <button type="submit">Confirm exact corrected support</button>
+    </form>
+  {% endif %}
+
+  {% if decisions %}
+    <details>
+      <summary>Decision history</summary>
+      <ol>
+        {% for decision in decisions %}
+          <li>{{ decision.action | replace("_", " ") | title }} — {{ decision.reason or "No reason recorded" }}</li>
+        {% endfor %}
+      </ol>
+    </details>
+  {% endif %}
+{% endblock %}

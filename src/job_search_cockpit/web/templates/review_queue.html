@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Review facts · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p>Fact vault review</p>
+  <h1>Facts that need your attention</h1>
+  <p>Conflicts and facts that need an individual decision appear first.</p>
+  <nav aria-label="Review filters">
+    {% for key, label in filters %}
+      <a href="/review?filter={{ key }}" {% if key == active_filter %}aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% if rows %}
+    <ol>
+      {% for row in rows %}
+        <li>
+          <a href="/review/{{ row.claim.id }}">{{ row.revision.display_value }}</a>
+          <p>{{ row.claim.subject }}</p>
+          <ul>
+            {% for reason in row.reasons %}<li>{{ reason }}</li>{% endfor %}
+          </ul>
+          {% if row.reasons == ["Review required"] %}
+            <label>
+              <input form="bulk-form" type="checkbox" name="items" value="{{ row.claim.id }}|{{ row.revision.id }}|{{ row.claim.version }}">
+              Include in low-risk approval
+            </label>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+    <form id="bulk-form" method="post" action="/review/bulk-approve">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Approve selected low-risk facts</button>
+    </form>
+  {% else %}
+    <p role="status">No facts match this filter.</p>
+  {% endif %}
+{% endblock %}

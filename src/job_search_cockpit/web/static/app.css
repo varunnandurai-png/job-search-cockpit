@@ -1,0 +1,379 @@
+:root {
+  color-scheme: light;
+  --page: #f5f5f7;
+  --surface: #ffffff;
+  --text: #1d1d1f;
+  --secondary: #6e6e73;
+  --accent: #0066cc;
+  --accent-hover: #0055ad;
+  --border: #d2d2d7;
+  --danger: #b42318;
+  --focus: #0066cc;
+  --radius: 0.75rem;
+  --motion-duration: 120ms;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--page);
+  overflow-x: hidden;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--page);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.55;
+  margin: 0;
+  min-width: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+.skip-link {
+  background: var(--text);
+  color: var(--surface);
+  left: 1rem;
+  padding: 0.75rem 1rem;
+  position: fixed;
+  top: -5rem;
+  z-index: 10;
+}
+
+.skip-link:focus {
+  color: var(--surface);
+  top: 1rem;
+}
+
+.site-header {
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--border);
+}
+
+.site-header__inner,
+.site-footer,
+.shell {
+  margin-inline: auto;
+  max-width: 72rem;
+  width: calc(100% - 2rem);
+}
+
+.site-header__inner {
+  align-items: center;
+  display: flex;
+  gap: 1.5rem;
+  justify-content: space-between;
+  min-height: 4rem;
+}
+
+.wordmark {
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.primary-nav {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  justify-content: flex-end;
+}
+
+.primary-nav a {
+  align-items: center;
+  border-radius: 0.4rem;
+  color: var(--text);
+  display: inline-flex;
+  min-height: 2.75rem;
+  padding-inline: 0.75rem;
+  text-decoration: none;
+}
+
+.primary-nav a:hover {
+  background: var(--page);
+}
+
+.shell {
+  min-height: calc(100vh - 10rem);
+  padding-block: clamp(2.5rem, 7vw, 5rem);
+}
+
+.shell > :first-child {
+  margin-top: 0;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: clamp(2.25rem, 7vw, 4.25rem);
+  margin-block: 0.5rem 1.25rem;
+  max-width: 16ch;
+}
+
+h2 {
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  margin-top: 0;
+}
+
+h3 {
+  font-size: 1.1rem;
+}
+
+p,
+li,
+dd,
+dt,
+pre,
+blockquote {
+  overflow-wrap: anywhere;
+}
+
+.shell > p:first-child,
+article > p:first-child {
+  color: var(--secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+section,
+details,
+.shell > form,
+.shell > article {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-block: 1.5rem;
+  padding: clamp(1.25rem, 4vw, 2rem);
+}
+
+article article,
+section section,
+details details,
+section form,
+details form {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+ol,
+ul {
+  padding-left: 1.4rem;
+}
+
+li + li {
+  margin-top: 0.6rem;
+}
+
+dl {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+
+dl > div {
+  background: var(--page);
+  border-radius: 0.5rem;
+  min-width: 0;
+  padding: 1rem;
+}
+
+dt {
+  color: var(--secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+dd {
+  font-size: 1.1rem;
+  font-weight: 650;
+  margin: 0.25rem 0 0;
+}
+
+form {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1.25rem;
+  max-width: 48rem;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  margin: 0;
+  min-width: 0;
+  padding: 1rem;
+}
+
+legend,
+label {
+  font-weight: 600;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea,
+button,
+.button {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  font: inherit;
+  min-height: 2.75rem;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  background: var(--surface);
+  color: var(--text);
+  max-width: 100%;
+  padding: 0.65rem 0.75rem;
+  width: 100%;
+}
+
+textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  height: 1.25rem;
+  margin-right: 0.45rem;
+  vertical-align: -0.2rem;
+  width: 1.25rem;
+}
+
+button,
+.button {
+  align-items: center;
+  background: #e8e8ed;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 650;
+  justify-content: center;
+  padding: 0.65rem 1rem;
+  text-decoration: none;
+  width: fit-content;
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+}
+
+.button--primary:hover {
+  background: var(--accent-hover);
+  color: var(--surface);
+}
+
+summary {
+  cursor: pointer;
+  font-size: 1.05rem;
+  font-weight: 700;
+  min-height: 2.75rem;
+  padding-block: 0.55rem;
+}
+
+[role="alert"] {
+  background: #fff1f0;
+  border: 1px solid #f3b7b1;
+  border-radius: 0.5rem;
+  color: var(--danger);
+  font-weight: 650;
+  padding: 1rem;
+}
+
+blockquote,
+pre {
+  background: var(--page);
+  border-left: 0.2rem solid var(--border);
+  margin-inline: 0;
+  max-width: 100%;
+  padding: 1rem;
+  white-space: pre-wrap;
+}
+
+:focus,
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  color: var(--secondary);
+  padding-block: 1.5rem 2.5rem;
+}
+
+@media (max-width: 44rem) {
+  .site-header__inner {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding-block: 0.75rem;
+  }
+
+  .primary-nav {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .primary-nav a {
+    padding-inline: 0.5rem;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 12vw, 3rem);
+  }
+
+  section,
+  details,
+  .shell > form,
+  .shell > article {
+    border-radius: 0.6rem;
+    padding: 1.15rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
