@@ -71,3 +71,26 @@ def test_validation_errors_are_announced(page: Page, vault_settings) -> None:
         page.locator("#diff-digest").fill("0" * 64)
         page.get_by_role("button", name="Create new profile version").click()
         expect(page.locator('[role="alert"]')).to_be_visible()
+
+
+def test_work_fact_correction_attribution_is_usable_at_narrow_width(
+    page: Page, vault_settings
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 900})
+    with running_test_app(vault_settings) as running:
+        page.goto(running.launch_url)
+        page.get_by_role("button", name="Import curated profile").click()
+        page.get_by_role("button", name="Import curated profile").click()
+        page.goto(f"{running.base_url}/review")
+        page.get_by_role(
+            "link", name="Led last-mile platform modernization supporting $250M annual GMV."
+        ).click()
+        page.get_by_text("Correct or reject this fact").click()
+
+        employer = page.get_by_label("Employer key, when this is a work fact")
+        expect(employer).to_have_value("example-commerce")
+        expect(page.get_by_label("Career period start")).to_have_value("2021-07-01")
+        expect(page.get_by_label("Career period end")).to_have_value("2024-06-01")
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+        )

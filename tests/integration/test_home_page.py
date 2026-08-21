@@ -39,14 +39,26 @@ def test_import_preview_is_read_only_then_matching_preview_can_apply(vault_setti
 def test_imported_html_like_text_is_escaped(vault_settings):
     source = vault_settings.sources[3].path
     source.write_text(
-        source.read_text(encoding="utf-8") + "\n- <script>alert('fixture')</script>\n",
+        source.read_text(encoding="utf-8") + "\n4. <script>alert('fixture')</script>\n",
         encoding="utf-8",
     )
     with build_test_app(vault_settings) as (launch, client):
         client.get(f"/launch?token={launch.token}")
-        response = client.post(
+        preview = client.post(
             "/imports/preview",
             headers={"origin": "http://127.0.0.1:8765"},
             data={"csrf_token": launch.csrf_token},
         )
+        applied = client.post(
+            "/imports/apply",
+            headers={"origin": "http://127.0.0.1:8765"},
+            data={
+                "csrf_token": launch.csrf_token,
+                "preview_id": preview.headers["x-preview-id"],
+            },
+            follow_redirects=False,
+        )
+        assert applied.status_code == 303
+        response = client.get("/review")
         assert "<script>" not in response.text
+        assert "&lt;script&gt;alert" in response.text

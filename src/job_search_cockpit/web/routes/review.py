@@ -202,9 +202,15 @@ def _fact_context(request: Request, claim_id: str) -> dict[str, Any] | None:
             revision.id: tuple(item for item in detail.evidence if item.revision_id == revision.id)
             for revision in detail.revisions
         }
+        active_revision = next(
+            revision
+            for revision in detail.revisions
+            if revision.id == detail.claim.active_revision_id
+        )
         return {
             "claim": detail.claim,
             "revisions": detail.revisions,
+            "active_revision": active_revision,
             "evidence_by_revision": evidence_by_revision,
             "group": group,
             "conflict_rows": conflict_rows,

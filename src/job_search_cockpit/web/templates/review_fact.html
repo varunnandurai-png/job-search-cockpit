@@ -30,6 +30,12 @@
         {% endfor %}
         <label for="conflict-correction">Or corrected wording</label>
         <textarea id="conflict-correction" name="corrected_display_value"></textarea>
+        <label for="conflict-employer">Employer key, when this is a work fact</label>
+        <input id="conflict-employer" name="employer_key" value="{{ active_revision.employer_key }}">
+        <label for="conflict-period-start">Career period start</label>
+        <input id="conflict-period-start" name="period_start" type="date" value="{{ active_revision.period_start.isoformat() if active_revision.period_start else '' }}">
+        <label for="conflict-period-end">Career period end</label>
+        <input id="conflict-period-end" name="period_end" type="date" value="{{ active_revision.period_end.isoformat() if active_revision.period_end else '' }}">
         <label for="conflict-reason">Reason</label>
         <textarea id="conflict-reason" name="reason" required></textarea>
         <button class="button button--primary" type="submit">Resolve conflict</button>
@@ -83,6 +89,12 @@
       <input type="hidden" name="expected_version" value="{{ claim.version }}">
       <label for="display-value">Correct wording</label>
       <textarea id="display-value" name="display_value" required>{{ submitted_value }}</textarea>
+      <label for="correction-employer">Employer key, when this is a work fact</label>
+      <input id="correction-employer" name="employer_key" value="{{ active_revision.employer_key }}">
+      <label for="correction-period-start">Career period start</label>
+      <input id="correction-period-start" name="period_start" type="date" value="{{ active_revision.period_start.isoformat() if active_revision.period_start else '' }}">
+      <label for="correction-period-end">Career period end</label>
+      <input id="correction-period-end" name="period_end" type="date" value="{{ active_revision.period_end.isoformat() if active_revision.period_end else '' }}">
       <label for="correction-reason">Reason</label>
       <textarea id="correction-reason" name="reason" required></textarea>
       <button type="submit">Save correction</button>

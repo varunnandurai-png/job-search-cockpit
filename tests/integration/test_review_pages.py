@@ -110,3 +110,19 @@ def test_correction_error_preserves_submitted_wording(vault_settings):
         assert response.status_code == 422
         assert "Exact revised fixture wording" in response.text
         assert "reason" in response.text.lower()
+
+
+def test_work_fact_correction_preserves_editable_employer_and_period(vault_settings):
+    with authenticated_test_app(vault_settings) as client:
+        _import(client)
+        claim = _claim(
+            vault_settings,
+            "employment.example-commerce.led-last-mile-platform-modernization-supporting-annual-gmv",
+        )
+
+        response = client.get(f"/review/{claim.id}")
+
+        assert response.status_code == 200
+        assert 'name="employer_key" value="example-commerce"' in response.text
+        assert 'name="period_start" type="date" value="2021-07-01"' in response.text
+        assert 'name="period_end" type="date" value="2024-06-01"' in response.text
