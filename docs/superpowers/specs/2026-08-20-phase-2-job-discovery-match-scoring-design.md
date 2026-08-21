@@ -1,16 +1,16 @@
 # Job Search Cockpit — Phase 2 Design
 
 **Date:** 2026-08-20  
-**Status:** User-approved and QA-hardened; awaiting written-spec review; design and planning only
+**Status:** User-approved and QA-hardened; Phase I accepted; approved for Phase II implementation planning
 **Phase:** Job discovery and match scoring
 
 ## Current project status
 
-Phase 1 has been designed, QA-hardened, implemented, and merged on branch `Dev`, but it has not yet passed every current quality gate or received Varun's explicit acceptance receipt. Phase 2 therefore remains design-and-planning-only at this point.
+Phase 1 has passed its documented quality gates, its four curated sources have a complete committed import, its readiness report is ready, and Varun explicitly accepted the Phase I acceptance receipt. Phase II implementation planning may now proceed. Runtime activation, provider access, and any live job work remain separately gated by the `Phase2ActivationGrant` and instance-level provider approval defined below.
 
 No Phase 2 application code may be written, no live job listing may be read or stored, and no live job provider may be contacted until Phase 1 has been implemented and accepted.
 
-This specification does not become ready for implementation planning until the QA corrections are complete and Varun reviews the corrected written document. Writing and approving the plan is allowed before Phase 1 implementation; executing any Phase 2 plan task is not.
+Varun has reviewed and approved this corrected written specification, so implementation planning may proceed. Executing any Phase II plan task remains gated by Phase I acceptance, an approved implementation plan, and the runtime safeguards defined below.
 
 ## Purpose
 
@@ -47,7 +47,7 @@ Phase 2 will not:
 
 ## Locked search rules
 
-Phase 2 must consume the active locked search-profile version from Phase 1. Version 1 contains the following non-negotiable rules.
+Phase 2 must consume the active locked search-profile snapshot from Phase 1 as its sole authority. The rules below describe the currently active version 2 baseline; an implementation must not hard-code them and must fail closed if the snapshot is unavailable or changes.
 
 ### Eligible locations and search effort
 
@@ -94,8 +94,8 @@ A job must positively match at least one of these versioned role profiles before
 
 ### Compensation floors
 
-- Hyderabad: ₹46 LPA minimum disclosed annual total compensation, preserving the `annual_total` basis in the approved Phase 1 implementation-plan golden profile (`MoneyFloor("INR", 4_600_000, "annual_total")`).
-- Bengaluru: ₹48 LPA minimum disclosed annual total compensation, preserving the `annual_total` basis in the approved Phase 1 implementation-plan golden profile (`MoneyFloor("INR", 4_800_000, "annual_total")`).
+- Hyderabad: ₹50 LPA minimum disclosed annual total compensation (`MoneyFloor("INR", 5_000_000, "annual_total")`).
+- Bengaluru: ₹55 LPA minimum disclosed annual total compensation (`MoneyFloor("INR", 5_500_000, "annual_total")`).
 - Singapore: S$120,000 minimum disclosed annual base compensation.
 
 Compensation rules are:
@@ -594,7 +594,7 @@ Every resolution stores the exact observation or Phase 1 decision ID, source cla
 
 An admissible written-confirmation observation records sender identity and relationship, original message or document hash and protected local locator, capture method, date, exact role and requisition, applicable employer and location path, quoted factual field, authenticity review, actor, and redacted display summary. A typed transcription or user attestation without the original evidence remains a note and cannot clear a factual warning. Written confirmations stay local and are excluded from scoring packets.
 
-For Indian `annual_total`, the versioned comparison formula includes fixed or base annual cash plus explicitly guaranteed recurring cash components for the applicable year. Discretionary bonus, equity, joining payment, retention payment, deferred compensation, benefits valuation, and unguaranteed incentives are itemized but excluded from automatic floor proof. This design does not invent a new basis: it consumes the explicit `annual_total` field in the approved Phase 1 implementation-plan golden profile. If the implemented and accepted Phase 1 snapshot does not return that exact basis, automatic comparison is blocked; Phase 2 must not infer it, and changing it requires a new locked profile version.
+For Indian `annual_total`, the versioned comparison formula includes fixed or base annual cash plus explicitly guaranteed recurring cash components for the applicable year. Discretionary bonus, equity, joining payment, retention payment, deferred compensation, benefits valuation, and unguaranteed incentives are itemized but excluded from automatic floor proof. This design does not invent a new basis: it consumes the exact basis in the active Phase 1 profile snapshot. If that snapshot does not return `annual_total` for an Indian location, automatic comparison is blocked; Phase 2 must not infer it, and changing it requires a new locked profile version.
 
 ## Requirement extraction
 
@@ -1088,7 +1088,7 @@ Automated tests use sanitized saved provider responses and synthetic Phase 1 ser
 
 ### Eligibility tests
 
-- Exact locked profile matches the Phase 1 golden profile field by field.
+- Exact locked profile snapshot matches the active Phase 1 profile field by field; the current acceptance fixture is profile version 2.
 - JPMorganChase and clear employer-name variations are always rejected.
 - All eligible, ineligible, remote, and multi-location cases.
 - Separate Hyderabad, Bengaluru, and Singapore location paths for one listing, including different floors and sponsorship outcomes.
@@ -1183,7 +1183,7 @@ Phase 2 is complete only when all of the following are demonstrated after Phase 
 2. Runtime Phase 2 cannot activate before Phase 1 implementation, acceptance, exact four-source readiness, compatibility, and Varun's confirmation. The first executable Phase 2 task proves the adapter contract; every other task stays blocked until it passes.
 3. Activation is revalidated and fails closed before every live access, packet, publication, current evidence or actionable-result display, and handoff; only the defined redacted historical view remains available when checks fail. Either store's restore invalidates the old activation grant, and a Phase 2 restore requires a new one.
 4. No automated acceptance test contacts a live provider or reads Varun's real fact vault.
-5. Every locked role, domain, location, allocation, compensation floor and basis, exclusion, notice period, and JPMorganChase exclusion matches the Phase 1 golden profile field by field.
+5. Every locked role, domain, location, allocation, compensation floor and basis, exclusion, notice period, and JPMorganChase exclusion matches the active Phase 1 profile snapshot field by field; the current acceptance fixture is profile version 2.
 6. A job must positively match an eligible role profile; an aspirational lane cannot admit unrelated roles.
 7. Principal, Applied-AI, and Technical-PM evidence predicates work exactly as specified.
 8. Search allocations use the exact terminal-unit truth table and fixed four-published-run window and guide effort without changing scores, thresholds, or shortlist composition.
@@ -1238,4 +1238,4 @@ After implementation and acceptance, Varun will have:
 - Visible gaps, uncertainty, and readiness warnings.
 - Versioned outputs that Phase 3 can consume safely after revalidation.
 
-Until Phase 1 has been implemented and accepted, this document authorizes design and planning only.
+Phase II implementation remains constrained by this design's activation, approval, and no-live-access gates.
