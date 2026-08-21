@@ -1,3 +1,4 @@
+import logging
 import socket
 import sqlite3
 import sys
@@ -15,6 +16,7 @@ from job_search_cockpit.config import Settings
 from job_search_cockpit.facts.permissions import NamedUseService, PermissionService
 from job_search_cockpit.facts.review import ReviewService
 from job_search_cockpit.imports.service import ImportService
+from job_search_cockpit.logging import configure_logging
 from job_search_cockpit.ports import PreparedVault, ServiceBundle
 from job_search_cockpit.readiness.service import ReadinessService
 from job_search_cockpit.search_profile.service import seed_profile_v1
@@ -92,6 +94,8 @@ def prepare_vault(settings: Settings) -> PreparedVault:
     settings.data_dir.chmod(0o700)
     settings.backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     settings.backup_dir.chmod(0o700)
+    configure_logging(settings)
+    logger = logging.getLogger("job_search_cockpit.launcher")
     instance_lock = AppInstanceLock.acquire(settings)
     coordinator: MutationCoordinator | None = None
     try:
@@ -133,6 +137,7 @@ def prepare_vault(settings: Settings) -> PreparedVault:
         )
         return PreparedVault(instance_lock, coordinator, coordinator.engine, services)
     except Exception:
+        logger.exception("vault_preparation_failed")
         if coordinator is not None:
             coordinator.dispose()
         instance_lock.release()
@@ -173,6 +178,7 @@ def build_launch_plan(settings: Settings) -> LaunchPlan:
         url = f"http://127.0.0.1:{port}/launch?token={launch_session.token}"
         return LaunchPlan(listener, port, url, launch_session, prepared, app)
     except Exception:
+        logging.getLogger("job_search_cockpit.launcher").exception("launch_plan_failed")
         listener.close()
         coordinator = prepared.coordinator
         if isinstance(coordinator, MutationCoordinator):
@@ -218,6 +224,7 @@ def main() -> int:
             return 1
         return 0
     except Exception as error:
+        logging.getLogger("job_search_cockpit.launcher").exception("server_start_failed")
         print(f"The cockpit stopped before opening: {error}")
         server.should_exit = True
         thread.join(timeout=10)

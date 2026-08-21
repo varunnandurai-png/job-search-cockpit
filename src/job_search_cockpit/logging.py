@@ -67,7 +67,11 @@ def configure_logging(settings: Settings) -> None:
     log_path.chmod(0o600)
 
     logger = logging.getLogger("job_search_cockpit")
+    logger.disabled = False
     logger.setLevel(logging.INFO)
+    for name, candidate in logging.Logger.manager.loggerDict.items():
+        if name.startswith("job_search_cockpit.") and isinstance(candidate, logging.Logger):
+            candidate.disabled = False
     for handler in tuple(logger.handlers):
         handler.close()
         logger.removeHandler(handler)
