@@ -6,7 +6,7 @@
 
 ## Current project status
 
-Phase 1 has been designed and QA-hardened, but its application code has not been built. Phase 2 is therefore design-only at this point.
+Phase 1 has been designed, QA-hardened, implemented, and merged on branch `Dev`, but it has not yet passed every current quality gate or received Varun's explicit acceptance receipt. Phase 2 therefore remains design-and-planning-only at this point.
 
 No Phase 2 application code may be written, no live job listing may be read or stored, and no live job provider may be contacted until Phase 1 has been implemented and accepted.
 
