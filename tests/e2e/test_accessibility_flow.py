@@ -75,9 +75,7 @@ def test_validation_errors_are_announced(page: Page, vault_settings) -> None:
         expect(page.locator('[role="alert"]')).to_be_visible()
 
 
-def test_search_profile_change_is_previewed_before_confirmation(
-    page: Page, vault_settings
-) -> None:
+def test_search_profile_change_is_previewed_before_confirmation(page: Page, vault_settings) -> None:
     with running_test_app(vault_settings) as running:
         page.goto(running.launch_url)
         page.goto(f"{running.base_url}/search-profile")

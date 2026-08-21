@@ -8,9 +8,7 @@ Create Date: 2026-08-19
 from collections.abc import Sequence
 
 from alembic import op
-
 from job_search_cockpit.storage.models import Base
-
 
 revision: str = "0001_phase_1_vault"
 down_revision: str | None = None

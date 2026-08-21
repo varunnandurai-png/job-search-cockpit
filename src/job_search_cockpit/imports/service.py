@@ -360,10 +360,12 @@ class ImportService:
             session.add(evidence_row)
             session.flush()
         support = session.scalar(
-            select(ClaimSupportAssertion).where(
+            select(ClaimSupportAssertion)
+            .where(
                 ClaimSupportAssertion.claim_id == claim.id,
                 ClaimSupportAssertion.revision_id == revision.id,
-            ).order_by(ClaimSupportAssertion.created_at.desc())
+            )
+            .order_by(ClaimSupportAssertion.created_at.desc())
         )
         if support is None or support.support_state != "supported":
             session.add(

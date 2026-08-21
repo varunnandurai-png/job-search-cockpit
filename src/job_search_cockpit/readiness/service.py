@@ -77,9 +77,7 @@ class ReadinessService:
             approved = len(approved_claims)
             rejected = self._count(
                 session,
-                select(func.count())
-                .select_from(Claim)
-                .where(Claim.status == ClaimStatus.REJECTED),
+                select(func.count()).select_from(Claim).where(Claim.status == ClaimStatus.REJECTED),
             )
             confidential = self._count(
                 session,

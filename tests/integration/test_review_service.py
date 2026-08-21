@@ -90,9 +90,7 @@ def test_unattributed_global_metric_is_never_resume_eligible(
     with _reviewed_vault(vault_settings) as (coordinator, review_service, _clock):
         factory = session_factory_for(coordinator.engine)
         with factory() as session:
-            claim = session.scalar(
-                select(Claim).where(Claim.canonical_key.startswith("metric."))
-            )
+            claim = session.scalar(select(Claim).where(Claim.canonical_key.startswith("metric.")))
             assert claim is not None
             session.expunge(claim)
         assert claim.active_revision_id is not None

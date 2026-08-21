@@ -243,9 +243,7 @@ def test_unavailable_source_does_not_make_its_existing_facts_stale(
 
         factory = session_factory_for(coordinator.engine)
         with factory() as session:
-            claim = session.scalar(
-                select(Claim).where(Claim.canonical_key == "profile.summary")
-            )
+            claim = session.scalar(select(Claim).where(Claim.canonical_key == "profile.summary"))
             assert claim is not None
             assert claim.stale is False
             assert claim.canonical_key not in result.stale_claims

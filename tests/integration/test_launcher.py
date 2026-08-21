@@ -47,9 +47,7 @@ def test_clean_restart_does_not_create_noop_backups(vault_settings, monkeypatch)
         second.instance_lock.release()
 
 
-def test_unexpected_startup_error_is_recorded_without_sensitive_values(
-    vault_settings, monkeypatch
-):
+def test_unexpected_startup_error_is_recorded_without_sensitive_values(vault_settings, monkeypatch):
     monkeypatch.setattr("job_search_cockpit.launcher.sys.platform", "darwin")
 
     def fail_upgrade(_database_url: str) -> None:

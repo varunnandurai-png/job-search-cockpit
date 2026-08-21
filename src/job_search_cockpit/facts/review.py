@@ -86,8 +86,7 @@ class AttributionPolicy:
         requires_employer = employment or quantified_work or category in {"title", "dates"}
         requires_period = quantified_work or (
             employment
-            and category
-            in {"achievement", "responsibility", "responsibilities", "team_scope"}
+            and category in {"achievement", "responsibility", "responsibilities", "team_scope"}
         )
         if requires_employer and not revision.employer_key:
             return EligibilityResult(False, "The fact has no verified employer attribution.")
