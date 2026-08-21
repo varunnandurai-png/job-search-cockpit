@@ -99,6 +99,29 @@ class MutationCoordinator:
         if self._disposed or not self._instance_lock.held:
             raise MutationUnavailable("Vault mutations are not available.")
 
+    def _create_recorded_backup(self, reason: str, actor: str) -> BackupResult:
+        backup = create_safety_copy(
+            self.settings.database_path,
+            self.settings.backup_dir,
+            reason,
+        )
+        self.recovery_ledger.append(
+            RecoveryEvent(
+                event_id=str(uuid4()),
+                event_type="backup_created",
+                payload={
+                    "backup_id": backup.backup_id,
+                    "vault_id": backup.vault_id,
+                    "sha256": backup.sha256,
+                    "alembic_revision": backup.alembic_revision,
+                    "actor": actor,
+                    "reason": reason,
+                },
+                created_at=backup.created_at,
+            )
+        )
+        return backup
+
     def run(
         self,
         operation: Callable[[Session], T],
@@ -108,7 +131,7 @@ class MutationCoordinator:
         del expected_version
         with self._mutex:
             self._assert_available()
-            create_safety_copy(self.settings.database_path, self.settings.backup_dir, reason)
+            self._create_recorded_backup(reason, actor="system")
             with self._session_factory() as session, session.begin():
                 return operation(session)
 
@@ -183,11 +206,7 @@ class MutationCoordinator:
                 try:
                     upgrade_database(f"sqlite:///{prepared}")
                     restored_checksum = _verify_prepared_copy(prepared)
-                    pre_restore = create_safety_copy(
-                        self.settings.database_path,
-                        self.settings.backup_dir,
-                        "before_restore",
-                    )
+                    pre_restore = self._create_recorded_backup("before_restore", actor)
                     self._replace_active_database(prepared, pre_restore)
                 finally:
                     prepared.unlink(missing_ok=True)
@@ -218,11 +237,7 @@ class MutationCoordinator:
         with self._mutex:
             self._assert_available()
             checksum = _verify_prepared_copy(prepared)
-            rollback = create_safety_copy(
-                self.settings.database_path,
-                self.settings.backup_dir,
-                reason,
-            )
+            rollback = self._create_recorded_backup(reason, actor="system")
             self._replace_active_database(prepared, rollback)
             return checksum
 

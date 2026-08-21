@@ -20,6 +20,13 @@ def test_coordinator_rolls_back_when_operation_fails(tmp_path: Path) -> None:
             coordinator.run(failing_operation, "import", expected_version=None)
         assert count_rows(settings.database_path, "claims") == 0
         assert len(tuple(settings.backup_dir.glob("*.sqlite3"))) == 1
+        entries = coordinator.recovery_ledger.read_all()
+        assert len(entries) == 1
+        event = entries[0].event
+        assert event.event_type == "backup_created"
+        assert event.payload["reason"] == "import"
+        assert event.payload["actor"] == "system"
+        assert len(str(event.payload["sha256"])) == 64
     finally:
         engine.dispose()
         lock.release()

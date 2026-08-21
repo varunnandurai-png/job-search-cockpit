@@ -35,6 +35,16 @@ def test_restore_replaces_vault_and_preserves_pre_restore_copy(tmp_path: Path) -
         result = coordinator.restore(backup.backup_id, actor="Varun", reason="test restore")
         assert count_rows(settings.database_path, "claims") == 0
         assert result.pre_restore_backup_id != backup.backup_id
+        entries = coordinator.recovery_ledger.read_all()
+        assert [entry.event.event_type for entry in entries] == [
+            "backup_created",
+            "restore_completed",
+        ]
+        assert entries[0].event.payload["backup_id"] == result.pre_restore_backup_id
+        assert entries[0].event.payload["actor"] == "Varun"
+        assert entries[1].event.payload["pre_restore_backup_id"] == (
+            result.pre_restore_backup_id
+        )
     finally:
         coordinator.dispose()
         lock.release()
