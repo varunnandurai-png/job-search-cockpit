@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 
 from playwright.sync_api import Page, expect
@@ -67,10 +69,34 @@ def test_validation_errors_are_announced(page: Page, vault_settings) -> None:
         page.goto(f"{running.base_url}/search-profile")
         page.get_by_text("Create a new confirmed version").click()
         page.locator("#profile-reason").fill("Fixture reason")
+        page.get_by_role("button", name="Review proposed profile").click()
         page.locator("#profile-confirmation").fill("WRONG")
-        page.locator("#diff-digest").fill("0" * 64)
         page.get_by_role("button", name="Create new profile version").click()
         expect(page.locator('[role="alert"]')).to_be_visible()
+
+
+def test_search_profile_change_is_previewed_before_confirmation(
+    page: Page, vault_settings
+) -> None:
+    with running_test_app(vault_settings) as running:
+        page.goto(running.launch_url)
+        page.goto(f"{running.base_url}/search-profile")
+        page.get_by_text("Create a new confirmed version").click()
+        payload = json.loads(page.locator("#payload-json").input_value())
+        payload["notice_period_days"] = 30
+        page.locator("#payload-json").fill(json.dumps(payload))
+        page.locator("#profile-reason").fill("Fixture notice change")
+        page.get_by_role("button", name="Review proposed profile").click()
+
+        expect(page.get_by_role("heading", name="Review the proposed change")).to_be_visible()
+        expect(page.locator('input[name="expected_diff_digest"]')).to_have_value(
+            re.compile(r"^[0-9a-f]{64}$")
+        )
+        page.locator("#profile-confirmation").fill("CREATE NEW SEARCH PROFILE VERSION")
+        page.get_by_role("button", name="Create new profile version").click()
+
+        expect(page.get_by_text("Version 2", exact=False).first).to_be_visible()
+        expect(page.get_by_text("Notice period: 30 days")).to_be_visible()
 
 
 def test_work_fact_correction_attribution_is_usable_at_narrow_width(

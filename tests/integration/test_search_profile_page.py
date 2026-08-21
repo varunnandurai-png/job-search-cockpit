@@ -15,6 +15,31 @@ def test_search_profile_page_shows_locked_filters(vault_settings):
         assert "Senior Product Manager" in response.text
         assert "Version 1" in response.text
         assert "every future discovery run" in response.text
+        assert 'action="/search-profile/preview"' in response.text
+        assert 'id="diff-digest"' not in response.text
+
+
+def test_profile_preview_computes_the_reviewed_diff_digest(vault_settings):
+    old = build_profile_v1()
+    new = old.model_copy(update={"notice_period_days": 30})
+    expected_digest = profile_diff_digest(old, new)
+    with authenticated_test_app(vault_settings) as client:
+        response = client.post(
+            "/search-profile/preview",
+            data={
+                "payload_json": new.model_dump_json(),
+                "reason": "Notice period changed",
+                "expected_active_version": 1,
+            },
+        )
+
+        assert response.status_code == 200
+        assert "Review the proposed change" in response.text
+        assert "Current version" in response.text
+        assert "Proposed version" in response.text
+        assert f'name="expected_diff_digest" value="{expected_digest}"' in response.text
+        assert 'name="reason" value="Notice period changed"' in response.text
+        assert 'id="diff-digest"' not in response.text
 
 
 def test_confirmed_profile_change_creates_visible_version(vault_settings):

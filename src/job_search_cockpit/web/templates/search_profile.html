@@ -40,22 +40,39 @@
     <ul>{% for exclusion in profile.excluded_role_patterns %}<li>{{ exclusion }}</li>{% endfor %}</ul>
   </section>
 
-  <details>
+  <details {% if error or proposed_diff_digest %}open{% endif %}>
     <summary>Create a new confirmed version</summary>
-    <p>A new version preserves this one. Review the complete proposed values and provide the server-verified diff digest.</p>
-    <form method="post" action="/search-profile/new-version">
+    <p>A new version preserves this one. The app calculates the review fingerprint after showing the complete proposed values.</p>
+    <form method="post" action="/search-profile/preview">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="expected_active_version" value="{{ active.version_number }}">
       <label for="payload-json">Proposed profile values</label>
       <textarea id="payload-json" name="payload_json" rows="18" required>{{ payload_json }}</textarea>
-      <label for="diff-digest">Reviewed old/new diff digest</label>
-      <input id="diff-digest" name="expected_diff_digest" required>
       <label for="profile-reason">Reason</label>
-      <textarea id="profile-reason" name="reason" required></textarea>
-      <label for="profile-confirmation">Type CREATE NEW SEARCH PROFILE VERSION</label>
-      <input id="profile-confirmation" name="confirmation" required>
-      <button class="button button--primary" type="submit">Create new profile version</button>
+      <textarea id="profile-reason" name="reason" required>{{ submitted_reason }}</textarea>
+      <button class="button button--primary" type="submit">Review proposed profile</button>
     </form>
+
+    {% if proposed_diff_digest %}
+      <section aria-labelledby="profile-preview-heading">
+        <h2 id="profile-preview-heading">Review the proposed change</h2>
+        <h3>Current version</h3>
+        <pre>{{ current_payload_json }}</pre>
+        <h3>Proposed version</h3>
+        <pre>{{ proposed_payload_json }}</pre>
+        <p>The app recorded this comparison with fingerprint <code>{{ proposed_diff_digest }}</code>.</p>
+        <form method="post" action="/search-profile/new-version">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="expected_active_version" value="{{ active.version_number }}">
+          <input type="hidden" name="expected_diff_digest" value="{{ proposed_diff_digest }}">
+          <input type="hidden" name="payload_json" value="{{ proposed_payload_json }}">
+          <input type="hidden" name="reason" value="{{ submitted_reason }}">
+          <label for="profile-confirmation">Type CREATE NEW SEARCH PROFILE VERSION</label>
+          <input id="profile-confirmation" name="confirmation" required>
+          <button class="button button--primary" type="submit">Create new profile version</button>
+        </form>
+      </section>
+    {% endif %}
   </details>
   <details>
     <summary>Earlier versions</summary>
