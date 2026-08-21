@@ -322,6 +322,11 @@ class ImportService:
             claim.version += int(changed)
             if RiskFlag.POTENTIALLY_CONFIDENTIAL in candidate.declared_risks:
                 claim.sensitivity = Sensitivity.UNREVIEWED
+        elif claim.stale:
+            claim.stale = False
+            if claim.status in {ClaimStatus.APPROVED, ClaimStatus.CORRECTED}:
+                claim.status = ClaimStatus.UNRESOLVED
+            claim.version += 1
         return claim, revision, created_claim, created_revision
 
     @staticmethod
@@ -358,10 +363,9 @@ class ImportService:
             select(ClaimSupportAssertion).where(
                 ClaimSupportAssertion.claim_id == claim.id,
                 ClaimSupportAssertion.revision_id == revision.id,
-                ClaimSupportAssertion.support_state == "supported",
-            )
+            ).order_by(ClaimSupportAssertion.created_at.desc())
         )
-        if support is None:
+        if support is None or support.support_state != "supported":
             session.add(
                 ClaimSupportAssertion(
                     id=str(uuid4()),
@@ -375,6 +379,7 @@ class ImportService:
                     period_end=revision.period_end,
                     actor="curated_import",
                     reason="Exact documentary evidence imported",
+                    supersedes_assertion_id=support.id if support is not None else None,
                 )
             )
 
@@ -442,7 +447,7 @@ class ImportService:
             stale: list[str] = []
             for claim in session.scalars(select(Claim)).all():
                 should_be_stale = claim.id not in current_claim_ids
-                if should_be_stale and not claim.stale:
+                if run.complete and should_be_stale and not claim.stale:
                     claim.stale = True
                     claim.version += 1
                     stale.append(claim.canonical_key)

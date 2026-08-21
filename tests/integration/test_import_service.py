@@ -221,3 +221,69 @@ def test_removed_fact_becomes_stale_with_append_only_support_loss(
                 .order_by(ClaimSupportAssertion.created_at)
             ).all()
             assert states == ["supported", "unsupported"]
+
+
+def test_unavailable_source_does_not_make_its_existing_facts_stale(
+    vault_settings: Settings,
+) -> None:
+    with _service(vault_settings) as (service, coordinator, clock):
+        service.apply(service.preview("session-1", clock.now()).id, "session-1", clock.now())
+        profile_path = next(
+            source.path for source in vault_settings.sources if source.key == "profile_json"
+        )
+        profile_path.unlink()
+
+        preview = service.preview("session-1", clock.now())
+        result = service.apply(
+            preview.id,
+            "session-1",
+            clock.now(),
+            confirm_incomplete=True,
+        )
+
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            claim = session.scalar(
+                select(Claim).where(Claim.canonical_key == "profile.summary")
+            )
+            assert claim is not None
+            assert claim.stale is False
+            assert claim.canonical_key not in result.stale_claims
+
+
+def test_exact_source_evidence_return_restores_current_support(
+    vault_settings: Settings,
+) -> None:
+    with _service(vault_settings) as (service, coordinator, clock):
+        service.apply(service.preview("session-1", clock.now()).id, "session-1", clock.now())
+        profile_path = next(
+            source.path for source in vault_settings.sources if source.key == "profile_json"
+        )
+        original_payload = json.loads(profile_path.read_text(encoding="utf-8"))
+        canonical_key = (
+            "employment.example-commerce.led-last-mile-platform-modernization-supporting-annual-gmv"
+        )
+        factory = session_factory_for(coordinator.engine)
+        with factory.begin() as session:
+            claim = session.scalar(select(Claim).where(Claim.canonical_key == canonical_key))
+            assert claim is not None
+            claim.status = ClaimStatus.APPROVED
+        without_fact = json.loads(json.dumps(original_payload))
+        without_fact["experience"][1]["bullets"].pop()
+        profile_path.write_text(json.dumps(without_fact), encoding="utf-8")
+        service.apply(service.preview("session-1", clock.now()).id, "session-1", clock.now())
+
+        profile_path.write_text(json.dumps(original_payload), encoding="utf-8")
+        service.apply(service.preview("session-1", clock.now()).id, "session-1", clock.now())
+
+        with factory() as session:
+            claim = session.scalar(select(Claim).where(Claim.canonical_key == canonical_key))
+            assert claim is not None
+            assert claim.stale is False
+            assert claim.status is ClaimStatus.UNRESOLVED
+            states = session.scalars(
+                select(ClaimSupportAssertion.support_state)
+                .where(ClaimSupportAssertion.claim_id == claim.id)
+                .order_by(ClaimSupportAssertion.created_at)
+            ).all()
+            assert states == ["supported", "unsupported", "supported"]
