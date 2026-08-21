@@ -1,3 +1,4 @@
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -49,6 +50,58 @@ def test_import_surfaces_product_year_and_team_scope_conflicts(
             families = {group.semantic_family for group in groups}
             assert "profile.product_years" in families
             assert "team_scope.jpmorganchase" in families
+
+
+def test_import_does_not_group_unrelated_numeric_facts_as_a_conflict(
+    vault_settings: Settings,
+) -> None:
+    with _imported_vault(vault_settings) as (coordinator, _service, _clock):
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            families = set(
+                session.scalars(
+                    select(ConflictGroup.semantic_family).where(ConflictGroup.status == "open")
+                )
+            )
+            assert "metric.statement" not in families
+
+
+def test_import_does_not_treat_punctuation_only_education_variants_as_a_conflict(
+    vault_settings: Settings,
+) -> None:
+    with _imported_vault(vault_settings) as (coordinator, _service, _clock):
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            families = set(
+                session.scalars(
+                    select(ConflictGroup.semantic_family).where(ConflictGroup.status == "open")
+                )
+            )
+            assert not any("example-school-mba" in family for family in families)
+
+
+def test_import_does_not_conflate_an_unnumbered_team_statement_with_team_counts(
+    vault_settings: Settings,
+) -> None:
+    profile = next(source.path for source in vault_settings.sources if source.key == "profile_json")
+    payload = json.loads(profile.read_text(encoding="utf-8"))
+    payload["experience"][0]["bullets"].append("Partnered with Scrum teams on launch planning.")
+    profile.write_text(json.dumps(payload), encoding="utf-8")
+
+    with _imported_vault(vault_settings) as (coordinator, _service, _clock):
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            group = session.scalar(
+                select(ConflictGroup).where(
+                    ConflictGroup.semantic_family == "team_scope.jpmorganchase",
+                    ConflictGroup.status == "open",
+                )
+            )
+            assert group is not None
+            members = session.scalars(
+                select(ConflictMember).where(ConflictMember.conflict_group_id == group.id)
+            ).all()
+            assert len(members) == 2
 
 
 def test_preview_reports_conflicts_without_selecting_a_winner(vault_settings: Settings) -> None:

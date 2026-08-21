@@ -29,6 +29,7 @@ from job_search_cockpit.storage.models import (
     Claim,
     ClaimEvidence,
     ClaimRevision,
+    ClaimSupportAssertion,
     ConfidentialPermissionEvent,
     ConflictGroup,
     ConflictMember,
@@ -83,7 +84,12 @@ def _parse_date(value: str) -> date | None:
     return date.fromisoformat(value) if value.strip() else None
 
 
-def _risk_details(claim: Claim, revision: ClaimRevision, conflict: bool) -> tuple[int, list[str]]:
+def _risk_details(
+    claim: Claim,
+    revision: ClaimRevision,
+    conflict: bool,
+    needs_support_confirmation: bool,
+) -> tuple[int, list[str]]:
     reasons: list[str] = []
     unresolved = claim.status.value == "unresolved"
     if conflict:
@@ -102,6 +108,8 @@ def _risk_details(claim: Claim, revision: ClaimRevision, conflict: bool) -> tupl
         reasons.append("Team scope requires individual review")
     if claim.stale:
         reasons.append("Source is stale")
+    if needs_support_confirmation:
+        reasons.append("Support confirmation required")
     if not reasons and unresolved:
         reasons.append("Review required")
     order = {
@@ -113,7 +121,8 @@ def _risk_details(claim: Claim, revision: ClaimRevision, conflict: bool) -> tupl
         "Title requires individual review": 5,
         "Team scope requires individual review": 6,
         "Source is stale": 7,
-        "Review required": 8,
+        "Support confirmation required": 8,
+        "Review required": 9,
     }
     return min((order[reason] for reason in reasons), default=9), reasons
 
@@ -135,7 +144,23 @@ def review_queue(request: Request, filter: str = "needs_attention") -> Response:
             revision = session.get(ClaimRevision, claim.active_revision_id)
             if revision is None:
                 continue
-            priority, reasons = _risk_details(claim, revision, claim.id in conflict_claim_ids)
+            support = session.scalar(
+                select(ClaimSupportAssertion)
+                .where(
+                    ClaimSupportAssertion.claim_id == claim.id,
+                    ClaimSupportAssertion.revision_id == revision.id,
+                )
+                .order_by(ClaimSupportAssertion.created_at.desc())
+            )
+            needs_support_confirmation = revision.origin == "user" and (
+                support is None or support.support_state != "supported"
+            )
+            priority, reasons = _risk_details(
+                claim,
+                revision,
+                claim.id in conflict_claim_ids,
+                needs_support_confirmation,
+            )
             matches = {
                 "needs_attention": bool(reasons),
                 "conflicts": "Sources disagree" in reasons,
@@ -207,6 +232,14 @@ def _fact_context(request: Request, claim_id: str) -> dict[str, Any] | None:
             for revision in detail.revisions
             if revision.id == detail.claim.active_revision_id
         )
+        support = session.scalar(
+            select(ClaimSupportAssertion)
+            .where(
+                ClaimSupportAssertion.claim_id == detail.claim.id,
+                ClaimSupportAssertion.revision_id == active_revision.id,
+            )
+            .order_by(ClaimSupportAssertion.created_at.desc())
+        )
         return {
             "claim": detail.claim,
             "revisions": detail.revisions,
@@ -215,6 +248,9 @@ def _fact_context(request: Request, claim_id: str) -> dict[str, Any] | None:
             "group": group,
             "conflict_rows": conflict_rows,
             "decisions": decisions,
+            "needs_support_confirmation": active_revision.origin == "user" and (
+                support is None or support.support_state != "supported"
+            ),
             "csrf_token": request.app.state.launch_session.csrf_token,
         }
 

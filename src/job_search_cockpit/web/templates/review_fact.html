@@ -108,7 +108,7 @@
     </form>
   </details>
 
-  {% if claim.status.value == "corrected" %}
+  {% if needs_support_confirmation %}
     <form method="post" action="/review/{{ claim.id }}/confirm-corrected-support">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="revision_id" value="{{ claim.active_revision_id }}">

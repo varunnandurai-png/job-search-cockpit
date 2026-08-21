@@ -99,7 +99,11 @@ def classify_risks(candidate: CandidateClaim) -> frozenset[RiskFlag]:
 
 
 def normalize_for_comparison(candidate: CandidateClaim) -> str:
-    normalized = normalize_text(candidate.display_value).casefold()
+    return _normalize_value_for_comparison(candidate.display_value)
+
+
+def _normalize_value_for_comparison(value: str) -> str:
+    normalized = normalize_text(value).casefold()
     normalized = re.sub(r"\s*[-\u2013\u2014]\s*", "-", normalized)
     normalized = re.sub(r"[^a-z0-9%+.-]+", " ", normalized)
     return " ".join(normalized.split())
@@ -133,10 +137,12 @@ def _stored_family(claim: Claim, revision: ClaimRevision) -> str:
         return f"employment.title.{revision.employer_key}"
     if canonical.endswith(".dates"):
         return f"employment.dates.{revision.employer_key}"
-    if re.search(r"\b(?:scrum\s+)?teams?\b", lowered):
+    if re.search(r"\b\d+\s+(?:scrum\s+)?teams?\b", lowered):
         return f"team_scope.{revision.employer_key}"
-    if _QUANTIFIED.search(revision.display_value):
-        return f"metric.{semantic_anchor(revision.display_value)}"
+    if claim.category.casefold() == "achievement" and _QUANTIFIED.search(revision.display_value):
+        anchor = semantic_anchor(revision.display_value)
+        if anchor != "statement":
+            return f"metric.{anchor}"
     return canonical
 
 
@@ -168,7 +174,10 @@ def rebuild_conflicts(
     reopened_count = 0
     active_group_ids: set[str] = set()
     for (family, employer, period_start, period_end), members in families.items():
-        if len({normalize_text(revision.display_value).casefold() for _, revision in members}) <= 1:
+        normalized_values = {
+            _normalize_value_for_comparison(revision.display_value) for _, revision in members
+        }
+        if len(normalized_values) <= 1:
             continue
         group = session.scalar(
             select(ConflictGroup).where(

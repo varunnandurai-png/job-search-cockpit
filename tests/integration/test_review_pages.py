@@ -112,6 +112,33 @@ def test_correction_error_preserves_submitted_wording(vault_settings):
         assert "reason" in response.text.lower()
 
 
+def test_approved_corrected_fact_still_offers_support_confirmation(vault_settings):
+    with authenticated_test_app(vault_settings) as client:
+        _import(client)
+        claim = _claim(vault_settings, "policy.resume.keep-critical-text-parseable-by-ats-software")
+        corrected = client.post(
+            f"/review/{claim.id}/correct",
+            data={
+                "display_value": "Exact corrected policy wording",
+                "reason": "User-confirmed wording",
+                "expected_version": claim.version,
+            },
+            follow_redirects=False,
+        )
+        assert corrected.status_code == 303
+        changed = _claim(vault_settings, claim.canonical_key)
+        approved = client.post(
+            f"/review/{claim.id}/approve",
+            data={"revision_id": changed.active_revision_id, "expected_version": changed.version},
+            follow_redirects=False,
+        )
+        assert approved.status_code == 303
+        queue = client.get("/review")
+        assert "Support confirmation required" in queue.text
+        page = client.get(f"/review/{claim.id}")
+        assert "Confirm exact corrected support" in page.text
+
+
 def test_work_fact_correction_preserves_editable_employer_and_period(vault_settings):
     with authenticated_test_app(vault_settings) as client:
         _import(client)

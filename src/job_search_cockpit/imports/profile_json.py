@@ -135,7 +135,7 @@ class ProfileJsonImporter:
                     continue
                 anchor = semantic_anchor(bullet)
                 family = f"employment.statement.{employer}.{anchor}"
-                if re.search(r"scrum teams?", bullet, re.IGNORECASE):
+                if re.search(r"\b\d+\s+scrum teams?\b", bullet, re.IGNORECASE):
                     family = f"team_scope.{employer}"
                 claims.append(
                     _claim(

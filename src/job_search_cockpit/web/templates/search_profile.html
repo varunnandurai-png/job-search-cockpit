@@ -23,7 +23,7 @@
           <dt>{{ location }}</dt><dd>{{ profile.location_allocation[location] }}%</dd>
           <dd>
             {% set floor = profile.compensation_floors[location] %}
-            {% if location == "Hyderabad" %}₹46 LPA minimum{% elif location == "Bengaluru" %}₹48 LPA minimum{% else %}SGD 120,000 annual base minimum{% endif %}
+            {% if floor.currency == "INR" %}₹{{ (floor.amount / 100000) | int }} LPA minimum{% else %}{{ floor.currency }} {{ floor.amount }} {{ floor.basis | replace("_", " ") }} minimum{% endif %}
           </dd>
         </div>
       {% endfor %}

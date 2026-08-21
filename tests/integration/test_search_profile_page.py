@@ -1,6 +1,6 @@
 import json
 
-from job_search_cockpit.search_profile.catalog import build_profile_v1
+from job_search_cockpit.search_profile.catalog import MoneyFloor, build_profile_v1
 from job_search_cockpit.search_profile.service import profile_diff_digest
 from tests.support.web import authenticated_test_app
 
@@ -61,6 +61,32 @@ def test_confirmed_profile_change_creates_visible_version(vault_settings):
         page = client.get("/search-profile")
         assert "Version 2" in page.text
         assert "30 days" in page.text
+
+
+def test_profile_page_renders_active_compensation_floors(vault_settings):
+    old = build_profile_v1()
+    floors = dict(old.compensation_floors)
+    floors.update(
+        {
+            "Hyderabad": MoneyFloor("INR", 5_000_000, "annual_total"),
+            "Bengaluru": MoneyFloor("INR", 5_500_000, "annual_total"),
+        }
+    )
+    new = old.model_copy(update={"compensation_floors": floors})
+    with authenticated_test_app(vault_settings) as client:
+        client.post(
+            "/search-profile/new-version",
+            data={
+                "payload_json": json.dumps(new.model_dump(mode="json")),
+                "reason": "Compensation updated",
+                "confirmation": "CREATE NEW SEARCH PROFILE VERSION",
+                "expected_active_version": 1,
+                "expected_diff_digest": profile_diff_digest(old, new),
+            },
+        )
+        page = client.get("/search-profile")
+        assert "₹50 LPA minimum" in page.text
+        assert "₹55 LPA minimum" in page.text
 
 
 def test_stale_profile_submission_is_rejected(vault_settings):

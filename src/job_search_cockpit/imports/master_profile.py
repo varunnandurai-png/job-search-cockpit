@@ -114,7 +114,7 @@ class MasterProfileImporter:
                     statement = line[2:].strip()
                     anchor = semantic_anchor(statement)
                     family = f"employment.statement.{employer}.{anchor}"
-                    if re.search(r"scrum teams?", statement, re.IGNORECASE):
+                    if re.search(r"\b\d+\s+scrum teams?\b", statement, re.IGNORECASE):
                         family = f"team_scope.{employer}"
                     claims.append(
                         _candidate(
