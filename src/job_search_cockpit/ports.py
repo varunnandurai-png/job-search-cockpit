@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from sqlalchemy.orm import Session
 
-from job_search_cockpit.phase1_contract.snapshots import Phase1ActivationInputs
+from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1ActivationInputs,
+    Phase1ManualContentReviewReceipt,
+    Phase1ManualContentReviewRequest,
+    Phase1ResumeFactProjection,
+    Phase1ResumeFactProjectionRequest,
+)
 
 if TYPE_CHECKING:
     from job_search_cockpit.facts.review import BulkReviewItem
@@ -95,6 +101,18 @@ class Phase1MatchingPort(Protocol):
     def revalidate_activation_inputs(
         self, expected: Phase1ActivationInputs
     ) -> Phase1ActivationInputs: ...
+
+    def resume_fact_projection(
+        self, request: Phase1ResumeFactProjectionRequest
+    ) -> Phase1ResumeFactProjection: ...
+
+    def revalidate_resume_fact_projection(
+        self, expected: Phase1ResumeFactProjection
+    ) -> Phase1ResumeFactProjection: ...
+
+    def request_manual_content_review(
+        self, request: Phase1ManualContentReviewRequest
+    ) -> Phase1ManualContentReviewReceipt: ...
 
 
 class AppInstanceLockPort(Protocol):

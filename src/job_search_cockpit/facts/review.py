@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -64,6 +65,22 @@ class ClaimView:
 class EligibilityResult:
     allowed: bool
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ManualContentReviewRequest:
+    canonical_key: str
+    category: str
+    safe_wording: str
+
+
+@dataclass(frozen=True, slots=True)
+class ManualContentReviewReceipt:
+    claim_id: str
+    revision_id: str
+    status: ClaimStatus
+    sensitivity: Sensitivity
+    origin: str
 
 
 class AttributionPolicy:
@@ -396,6 +413,96 @@ class ReviewService:
             return _view(claim)
 
         return self.coordinator.run(set_one, "set_fact_sensitivity", expected_version)
+
+    def request_manual_content_review(
+        self, request: ManualContentReviewRequest
+    ) -> ManualContentReviewReceipt:
+        category = request.category.strip().casefold()
+        sensitive_categories = {
+            "health",
+            "disability",
+            "gender",
+            "ethnicity",
+            "religion",
+            "caste",
+            "veteran_status",
+            "criminal_history",
+        }
+        if category in sensitive_categories:
+            raise ReviewError("Sensitive voluntary disclosures must remain blank.")
+        if category not in {"career_fact", "resume_wording", "application_answer"}:
+            raise ReviewError("Choose a supported manual-content category.")
+        canonical_key = request.canonical_key.strip()
+        wording = request.safe_wording.strip()
+        if re.fullmatch(r"[a-z][a-z0-9_.-]{0,254}", canonical_key) is None:
+            raise ReviewError("The manual-content key must be a canonical identifier.")
+        if not wording or len(wording) > 2_000:
+            raise ReviewError("Manual content must contain at most 2,000 characters.")
+
+        def record(session: Session) -> ManualContentReviewReceipt:
+            claim = session.scalar(select(Claim).where(Claim.canonical_key == canonical_key))
+            if claim is None:
+                claim = Claim(
+                    id=str(uuid4()),
+                    canonical_key=canonical_key,
+                    category=category,
+                    subject="Manual content review",
+                    status=ClaimStatus.UNRESOLVED,
+                    sensitivity=Sensitivity.UNREVIEWED,
+                    active_revision_id=None,
+                    stale=False,
+                    version=1,
+                )
+                session.add(claim)
+                session.flush()
+            semantic_value = json.dumps({"text": wording}, sort_keys=True, separators=(",", ":"))
+            revision = session.scalar(
+                select(ClaimRevision).where(
+                    ClaimRevision.claim_id == claim.id,
+                    ClaimRevision.semantic_value == semantic_value,
+                    ClaimRevision.employer_key == "",
+                    ClaimRevision.period_start.is_(None),
+                    ClaimRevision.period_end.is_(None),
+                )
+            )
+            if revision is None:
+                revision = ClaimRevision(
+                    id=str(uuid4()),
+                    claim_id=claim.id,
+                    value_json={"text": wording},
+                    display_value=wording,
+                    semantic_value=semantic_value,
+                    origin="user",
+                    employer_key="",
+                    period_start=None,
+                    period_end=None,
+                )
+                session.add(revision)
+                session.flush()
+            claim.active_revision_id = revision.id
+            claim.status = ClaimStatus.UNRESOLVED
+            claim.sensitivity = Sensitivity.UNREVIEWED
+            claim.version += 1
+            session.add(
+                AuditEvent(
+                    id=str(uuid4()),
+                    event_type="manual_content_review_requested",
+                    area="facts",
+                    subject_id=claim.id,
+                    summary="Manual content entered Phase I review.",
+                    after_json={"revision_id": revision.id, "category": category},
+                    sensitive=False,
+                )
+            )
+            return ManualContentReviewReceipt(
+                claim_id=claim.id,
+                revision_id=revision.id,
+                status=claim.status,
+                sensitivity=claim.sensitivity,
+                origin=revision.origin,
+            )
+
+        return self.coordinator.run(record, "request_manual_content_review", expected_version=None)
 
     def bulk_approve_low_risk(self, items: Sequence[BulkReviewItem]) -> BulkReviewResult:
         if not items:

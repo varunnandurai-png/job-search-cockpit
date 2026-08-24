@@ -1,0 +1,28 @@
+import pytest
+
+from job_search_cockpit.config import Settings
+from job_search_cockpit.phase2.resume_safety import ResumePreparationError
+from job_search_cockpit.phase2.runtime import prepare_phase2_runtime
+
+
+class _Phase1Port:
+    def activation_inputs(self) -> object:
+        raise AssertionError("Runtime setup must not request Phase I inputs.")
+
+    def revalidate_activation_inputs(self, expected: object) -> object:
+        raise AssertionError("Runtime setup must not revalidate Phase I inputs.")
+
+
+def test_runtime_denies_resume_preparation_without_verified_job_readiness(
+    phase2_settings,
+    tmp_path,
+) -> None:
+    settings = Settings.for_tests(phase2_settings.data_dir, tmp_path / "sanitized-sources")
+    runtime = prepare_phase2_runtime(settings, _Phase1Port())
+    try:
+        with pytest.raises(ResumePreparationError, match="verified job readiness is unavailable"):
+            runtime.resume_preparation_service.start(
+                job_id="sanitized-job-1", resume_kind="tailored"
+            )
+    finally:
+        runtime.close()

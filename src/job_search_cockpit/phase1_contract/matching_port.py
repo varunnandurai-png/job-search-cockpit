@@ -2,7 +2,13 @@ from job_search_cockpit.phase1_contract.service import (
     Phase1ContractService,
     Phase1ContractUnavailable,
 )
-from job_search_cockpit.phase1_contract.snapshots import Phase1ActivationInputs
+from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1ActivationInputs,
+    Phase1ManualContentReviewReceipt,
+    Phase1ManualContentReviewRequest,
+    Phase1ResumeFactProjection,
+    Phase1ResumeFactProjectionRequest,
+)
 
 
 class InternalPhase1MatchingPort:
@@ -40,3 +46,18 @@ class InternalPhase1MatchingPort:
         if expected.acceptance_receipt.fingerprint != current.acceptance_receipt.fingerprint:
             raise Phase1ContractUnavailable("The Phase I acceptance receipt changed.")
         return current
+
+    def resume_fact_projection(
+        self, request: Phase1ResumeFactProjectionRequest
+    ) -> Phase1ResumeFactProjection:
+        return self._contract_service.snapshot_resume_fact_projection(request)
+
+    def revalidate_resume_fact_projection(
+        self, expected: Phase1ResumeFactProjection
+    ) -> Phase1ResumeFactProjection:
+        return self._contract_service.revalidate_resume_fact_projection(expected)
+
+    def request_manual_content_review(
+        self, request: Phase1ManualContentReviewRequest
+    ) -> Phase1ManualContentReviewReceipt:
+        return self._contract_service.request_manual_content_review(request)

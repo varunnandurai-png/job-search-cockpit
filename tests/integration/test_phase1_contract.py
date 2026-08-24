@@ -5,11 +5,16 @@ from uuid import uuid4
 import pytest
 
 from job_search_cockpit.config import Settings
+from job_search_cockpit.facts.types import Sensitivity
 from job_search_cockpit.phase1_contract.matching_port import InternalPhase1MatchingPort
 from job_search_cockpit.phase1_contract.service import (
     Phase1BuildMetadata,
     Phase1ContractService,
     Phase1ContractUnavailable,
+)
+from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1ManualContentReviewRequest,
+    Phase1ResumeFactProjectionRequest,
 )
 from job_search_cockpit.search_profile.catalog import build_profile_v1
 from job_search_cockpit.search_profile.service import (
@@ -18,7 +23,15 @@ from job_search_cockpit.search_profile.service import (
     seed_profile_v1,
 )
 from job_search_cockpit.storage.database import create_engine_for, upgrade_database
-from job_search_cockpit.storage.models import ImportRun, ImportRunSource
+from job_search_cockpit.storage.models import (
+    Claim,
+    ClaimRevision,
+    ClaimStatus,
+    ClaimSupportAssertion,
+    ImportRun,
+    ImportRunSource,
+    Phase1AuthorityState,
+)
 from job_search_cockpit.storage.mutation import AppInstanceLock, MutationCoordinator
 
 
@@ -169,3 +182,132 @@ def test_matching_port_rejects_a_changed_profile(vault_settings: Settings) -> No
 
         with pytest.raises(Phase1ContractUnavailable, match="profile generation"):
             port.revalidate_activation_inputs(captured)
+
+
+def test_matching_port_projects_only_current_safe_fact_revisions(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-118-pass",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+
+        def add_approved_fact(session: object) -> None:
+            claim = Claim(
+                id="sanitized-claim-1",
+                canonical_key="skills.python",
+                category="skill",
+                subject="sanitized-subject",
+                status=ClaimStatus.APPROVED,
+                sensitivity=Sensitivity.NORMAL,
+                active_revision_id=None,
+                stale=False,
+                version=1,
+            )
+            session.add(claim)
+            revision = ClaimRevision(
+                id="sanitized-revision-1",
+                claim_id=claim.id,
+                value_json={"text": "Python"},
+                display_value="Python",
+                semantic_value='{"text":"Python"}',
+                origin="source",
+                employer_key="",
+                period_start=None,
+                period_end=None,
+            )
+            session.add(revision)
+            session.flush()
+            claim.active_revision_id = revision.id
+            session.add(
+                ClaimSupportAssertion(
+                    id="sanitized-support-1",
+                    claim_id=claim.id,
+                    revision_id=revision.id,
+                    support_state="supported",
+                    support_type="documentary",
+                    source_evidence_id=None,
+                    employer_key="",
+                    period_start=None,
+                    period_end=None,
+                    actor="test",
+                    reason="Sanitized contract fixture",
+                    supersedes_assertion_id=None,
+                )
+            )
+
+        coordinator.run(add_approved_fact, "sanitized_resume_projection", expected_version=None)
+
+        projection = InternalPhase1MatchingPort(contract).resume_fact_projection(
+            Phase1ResumeFactProjectionRequest(requirement_ids=("skills.python",))
+        )
+
+    assert projection.profile_fingerprint
+    assert projection.readiness_fingerprint
+    assert len(projection.facts) == 1
+    assert projection.facts[0].requirement_id == "skills.python"
+    assert projection.facts[0].claim_id == "sanitized-claim-1"
+    assert projection.facts[0].revision_id == "sanitized-revision-1"
+    assert projection.facts[0].safe_wording == "Python"
+    assert not hasattr(projection.facts[0], "value_json")
+
+
+def test_matching_port_rejects_a_changed_resume_fact_projection(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-118-pass",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+        port = InternalPhase1MatchingPort(contract)
+        projection = port.resume_fact_projection(
+            Phase1ResumeFactProjectionRequest(
+                requirement_ids=("skills.python",)
+            )
+        )
+
+        def change_readiness_generation(session: object) -> None:
+            authority = session.get(Phase1AuthorityState, 1)
+            assert authority is not None
+            authority.readiness_generation += 1
+
+        coordinator.run(
+            change_readiness_generation,
+            "sanitized_projection_change",
+            expected_version=None,
+        )
+
+        with pytest.raises(Phase1ContractUnavailable, match="fact projection changed"):
+            port.revalidate_resume_fact_projection(projection)
+
+
+def test_matching_port_sends_manual_content_to_phase1_review(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-118-pass",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+
+        receipt = InternalPhase1MatchingPort(contract).request_manual_content_review(
+            Phase1ManualContentReviewRequest(
+                canonical_key="application.answer.work_authorization",
+                category="application_answer",
+                safe_wording="Authorized to work in the stated location.",
+            )
+        )
+
+    assert receipt.status == "unresolved"
+    assert receipt.origin == "user"

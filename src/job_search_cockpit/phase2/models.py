@@ -46,12 +46,25 @@ class Phase2ActivationGrant(Phase2Base):
 
 class Phase2ResumePreparationAttempt(Phase2Base):
     __tablename__ = "phase2_resume_preparation_attempts"
-    __table_args__ = (UniqueConstraint("authorization_id"),)
+    __table_args__ = (
+        UniqueConstraint("authorization_id"),
+        UniqueConstraint("authorization_nonce", name="uq_phase2_resume_preparation_nonce"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     job_id: Mapped[str] = mapped_column(String(120))
     job_revision_id: Mapped[str] = mapped_column(String(120))
+    selected_location_path_fingerprint: Mapped[str | None] = mapped_column(String(64))
     authorization_id: Mapped[str] = mapped_column(String(120))
+    authorization_nonce: Mapped[str | None] = mapped_column(String(120))
     authorization_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    activation_generation: Mapped[int] = mapped_column(Integer)
+    phase1_profile_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    phase1_profile_generation: Mapped[int | None] = mapped_column(Integer)
+    phase1_readiness_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    phase1_readiness_generation: Mapped[int | None] = mapped_column(Integer)
+    phase1_authority_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    phase1_authority_generation: Mapped[int | None] = mapped_column(Integer)
+    phase1_restore_generation: Mapped[int | None] = mapped_column(Integer)
+    phase2_activation_generation: Mapped[int | None] = mapped_column(Integer)
+    phase2_restore_generation: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

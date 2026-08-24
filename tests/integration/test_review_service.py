@@ -10,6 +10,7 @@ from job_search_cockpit.facts.permissions import NamedUseService, PermissionServ
 from job_search_cockpit.facts.review import (
     BulkReviewItem,
     IndividualReviewRequired,
+    ManualContentReviewRequest,
     ReviewService,
     is_resume_eligible,
 )
@@ -263,3 +264,36 @@ def test_due_permission_expiry_is_idempotent(vault_settings: Settings) -> None:
                 )
             )
         assert [event.event_type for event in events] == ["grant", "expire"]
+
+
+def test_manual_content_request_enters_existing_phase1_review_queue(
+    vault_settings: Settings,
+) -> None:
+    with _reviewed_vault(vault_settings) as (_coordinator, review_service, _clock):
+        request = review_service.request_manual_content_review(
+            ManualContentReviewRequest(
+                canonical_key="application.answer.work_authorization",
+                category="application_answer",
+                safe_wording="Authorized to work in the stated location.",
+            )
+        )
+
+    assert request.status is ClaimStatus.UNRESOLVED
+    assert request.sensitivity is Sensitivity.UNREVIEWED
+    assert request.origin == "user"
+
+
+def test_sensitive_voluntary_manual_content_is_rejected_before_storage(
+    vault_settings: Settings,
+) -> None:
+    with (
+        _reviewed_vault(vault_settings) as (_coordinator, review_service, _clock),
+        pytest.raises(ValueError, match="must remain blank"),
+    ):
+        review_service.request_manual_content_review(
+            ManualContentReviewRequest(
+                canonical_key="application.answer.voluntary_disclosure",
+                category="health",
+                safe_wording="Sensitive answer that must not be stored.",
+            )
+        )

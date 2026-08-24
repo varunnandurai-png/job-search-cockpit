@@ -6,10 +6,20 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from job_search_cockpit.config import Settings
+from job_search_cockpit.facts.review import (
+    ManualContentReviewRequest,
+    ReviewService,
+    is_resume_eligible,
+)
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1AcceptanceReceiptSnapshot,
     Phase1ActivationInputs,
+    Phase1ManualContentReviewReceipt,
+    Phase1ManualContentReviewRequest,
     Phase1ReadinessSnapshot,
+    Phase1ResumeFactProjection,
+    Phase1ResumeFactProjectionRequest,
+    Phase1ResumeFactSnapshot,
     SearchProfileSnapshot,
     canonical_fingerprint,
 )
@@ -18,6 +28,9 @@ from job_search_cockpit.search_profile.catalog import SearchProfilePayload
 from job_search_cockpit.search_profile.service import get_active_profile
 from job_search_cockpit.storage.database import session_factory_for
 from job_search_cockpit.storage.models import (
+    Claim,
+    ClaimRevision,
+    ClaimSupportAssertion,
     ImportRun,
     ImportRunSource,
     Phase1AcceptanceReceipt,
@@ -195,3 +208,109 @@ class Phase1ContractService:
                 readiness=readiness,
                 profile=profile_snapshot,
             )
+
+    def snapshot_resume_fact_projection(
+        self, request: Phase1ResumeFactProjectionRequest
+    ) -> Phase1ResumeFactProjection:
+        inputs = self.snapshot_activation_inputs()
+        factory = session_factory_for(self._coordinator.engine)
+        facts: list[Phase1ResumeFactSnapshot] = []
+        with factory() as session:
+            for requirement_id in request.requirement_ids:
+                claim = session.scalar(
+                    select(Claim).where(Claim.canonical_key == requirement_id)
+                )
+                if claim is None or claim.active_revision_id is None:
+                    continue
+                eligibility = is_resume_eligible(
+                    session,
+                    claim.id,
+                    claim.active_revision_id,
+                    named_use_id="",
+                )
+                if not eligibility.allowed:
+                    continue
+                revision = session.get(ClaimRevision, claim.active_revision_id)
+                support = session.scalar(
+                    select(ClaimSupportAssertion)
+                    .where(
+                        ClaimSupportAssertion.claim_id == claim.id,
+                        ClaimSupportAssertion.revision_id == claim.active_revision_id,
+                    )
+                    .order_by(ClaimSupportAssertion.created_at.desc())
+                )
+                if revision is None or support is None or support.support_state != "supported":
+                    continue
+                facts.append(
+                    Phase1ResumeFactSnapshot(
+                        requirement_id=requirement_id,
+                        claim_id=claim.id,
+                        revision_id=revision.id,
+                        support_assertion_id=support.id,
+                        safe_wording=revision.display_value,
+                        employer_key=revision.employer_key or None,
+                        period_start=(
+                            revision.period_start.isoformat()
+                            if revision.period_start is not None
+                            else None
+                        ),
+                        period_end=(
+                            revision.period_end.isoformat()
+                            if revision.period_end is not None
+                            else None
+                        ),
+                    )
+                )
+        payload = {
+            "requirement_ids": request.requirement_ids,
+            "facts": [fact.model_dump(mode="json") for fact in facts],
+            "profile_fingerprint": inputs.profile.fingerprint,
+            "profile_generation": inputs.profile.active_profile_generation,
+            "readiness_fingerprint": inputs.readiness.fingerprint,
+            "readiness_generation": inputs.readiness.readiness_generation,
+            "authority_fingerprint": inputs.acceptance_receipt.fingerprint,
+            "authority_generation": inputs.readiness.authority_high_water_mark,
+            "restore_generation": inputs.readiness.restore_generation,
+        }
+        return Phase1ResumeFactProjection(
+            requirement_ids=request.requirement_ids,
+            facts=tuple(facts),
+            profile_fingerprint=inputs.profile.fingerprint,
+            profile_generation=inputs.profile.active_profile_generation,
+            readiness_fingerprint=inputs.readiness.fingerprint,
+            readiness_generation=inputs.readiness.readiness_generation,
+            authority_fingerprint=inputs.acceptance_receipt.fingerprint,
+            authority_generation=inputs.readiness.authority_high_water_mark,
+            restore_generation=inputs.readiness.restore_generation,
+            fingerprint=canonical_fingerprint(payload),
+        )
+
+    def revalidate_resume_fact_projection(
+        self, expected: Phase1ResumeFactProjection
+    ) -> Phase1ResumeFactProjection:
+        current = self.snapshot_resume_fact_projection(
+            Phase1ResumeFactProjectionRequest(requirement_ids=expected.requirement_ids)
+        )
+        if current != expected:
+            raise Phase1ContractUnavailable("The Phase I resume fact projection changed.")
+        return current
+
+    def request_manual_content_review(
+        self, request: Phase1ManualContentReviewRequest
+    ) -> Phase1ManualContentReviewReceipt:
+        self.snapshot_activation_inputs()
+        receipt = ReviewService(self._coordinator).request_manual_content_review(
+            ManualContentReviewRequest(
+                canonical_key=request.canonical_key,
+                category=request.category,
+                safe_wording=request.safe_wording,
+            )
+        )
+        if receipt.status.value != "unresolved" or receipt.origin != "user":
+            raise Phase1ContractUnavailable("The manual content was not held for Phase I review.")
+        return Phase1ManualContentReviewReceipt(
+            claim_id=receipt.claim_id,
+            revision_id=receipt.revision_id,
+            status="unresolved",
+            origin="user",
+        )

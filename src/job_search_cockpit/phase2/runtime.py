@@ -5,6 +5,11 @@ from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
 from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2MutationCoordinator
+from job_search_cockpit.phase2.resume_safety import (
+    ResumePreparationAttemptStore,
+    ResumePreparationService,
+    VerifiedJobReadinessUnavailable,
+)
 from job_search_cockpit.ports import Phase1MatchingPort
 
 
@@ -13,6 +18,7 @@ class Phase2Runtime:
     coordinator: Phase2MutationCoordinator
     instance_lock: Phase2InstanceLock
     activation_service: Phase2ActivationService
+    resume_preparation_service: ResumePreparationService
 
     def close(self) -> None:
         self.coordinator.dispose()
@@ -29,4 +35,7 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         coordinator=coordinator,
         instance_lock=instance_lock,
         activation_service=Phase2ActivationService(phase1_port, coordinator),
+        resume_preparation_service=ResumePreparationService(
+            VerifiedJobReadinessUnavailable(), ResumePreparationAttemptStore(coordinator)
+        ),
     )
