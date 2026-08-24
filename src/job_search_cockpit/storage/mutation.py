@@ -22,7 +22,7 @@ from job_search_cockpit.storage.database import (
     session_factory_for,
     upgrade_database,
 )
-from job_search_cockpit.storage.models import ImportAttempt
+from job_search_cockpit.storage.models import ImportAttempt, Phase1AuthorityState
 from job_search_cockpit.storage.recovery_ledger import LedgerEntry, RecoveryEvent, RecoveryLedger
 from job_search_cockpit.storage.restore import InvalidBackup, RestoreResult, verify_backup
 
@@ -122,6 +122,18 @@ class MutationCoordinator:
         )
         return backup
 
+    @staticmethod
+    def _touch_phase1_authority(session: Session, *, restored: bool = False) -> None:
+        state = session.get(Phase1AuthorityState, 1)
+        if state is None:
+            state = Phase1AuthorityState(id=1)
+            session.add(state)
+            session.flush()
+        state.authority_high_water_mark += 1
+        state.readiness_generation += 1
+        if restored:
+            state.restore_generation += 1
+
     def run(
         self,
         operation: Callable[[Session], T],
@@ -133,7 +145,9 @@ class MutationCoordinator:
             self._assert_available()
             self._create_recorded_backup(reason, actor="system")
             with self._session_factory() as session, session.begin():
-                return operation(session)
+                result = operation(session)
+                self._touch_phase1_authority(session)
+                return result
 
     def begin_request(self) -> None:
         """Enter a request that must finish before vault replacement."""
@@ -208,6 +222,8 @@ class MutationCoordinator:
                     restored_checksum = _verify_prepared_copy(prepared)
                     pre_restore = self._create_recorded_backup("before_restore", actor)
                     self._replace_active_database(prepared, pre_restore)
+                    with self._session_factory() as session, session.begin():
+                        self._touch_phase1_authority(session, restored=True)
                 finally:
                     prepared.unlink(missing_ok=True)
                 self.recovery_ledger.append(

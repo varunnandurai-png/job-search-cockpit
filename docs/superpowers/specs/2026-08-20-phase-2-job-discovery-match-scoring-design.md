@@ -1,7 +1,7 @@
 # Job Search Cockpit — Phase 2 Design
 
 **Date:** 2026-08-20  
-**Status:** User-approved and QA-hardened; Phase I accepted; approved for Phase II implementation planning
+**Status:** Phase II-A activation foundation implemented and verified locally. Provider approval, collection, scoring, shortlist, and every other live-discovery function remain unimplemented and disabled pending Phase II-B approval.
 **Phase:** Job discovery and match scoring
 
 ## Current project status

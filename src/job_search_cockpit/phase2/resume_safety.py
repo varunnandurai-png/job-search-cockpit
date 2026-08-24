@@ -1,0 +1,109 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Literal, Protocol
+from uuid import uuid4
+
+from sqlalchemy.orm import Session
+
+from job_search_cockpit.phase2.models import Phase2ResumePreparationAttempt
+from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
+
+
+class ResumePreparationError(ValueError):
+    """Raised when résumé preparation cannot proceed safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedJobPreparationAuthorization:
+    job_id: str
+    job_revision_id: str
+    authorization_id: str
+    eligibility: Literal["eligible", "ineligible", "needs_clarification"]
+    expires_at: datetime
+    activation_generation: int
+    unknown_mandatory_rule_codes: tuple[str, ...] = ()
+
+
+class VerifiedJobPreparationPort(Protocol):
+    def authorization_for_resume(self, job_id: str) -> VerifiedJobPreparationAuthorization: ...
+
+    def revalidate_resume_authorization(
+        self, expected: VerifiedJobPreparationAuthorization
+    ) -> VerifiedJobPreparationAuthorization: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ResumePreparationAttempt:
+    id: str
+    job_id: str
+    job_revision_id: str
+    authorization_id: str
+    activation_generation: int
+
+
+class ResumePreparationAttemptStore:
+    def __init__(self, coordinator: Phase2MutationCoordinator) -> None:
+        self._coordinator = coordinator
+
+    def record(
+        self, authorization: VerifiedJobPreparationAuthorization
+    ) -> ResumePreparationAttempt:
+        def insert(session: Session) -> ResumePreparationAttempt:
+            attempt = Phase2ResumePreparationAttempt(
+                id=str(uuid4()),
+                job_id=authorization.job_id,
+                job_revision_id=authorization.job_revision_id,
+                authorization_id=authorization.authorization_id,
+                authorization_expires_at=authorization.expires_at,
+                activation_generation=authorization.activation_generation,
+            )
+            session.add(attempt)
+            session.flush()
+            return ResumePreparationAttempt(
+                id=attempt.id,
+                job_id=attempt.job_id,
+                job_revision_id=attempt.job_revision_id,
+                authorization_id=attempt.authorization_id,
+                activation_generation=attempt.activation_generation,
+            )
+
+        return self._coordinator.run(insert, "record_resume_preparation_attempt")
+
+
+class ResumePreparationService:
+    def __init__(
+        self,
+        preparation_port: VerifiedJobPreparationPort,
+        attempt_store: ResumePreparationAttemptStore | None = None,
+        *,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._preparation_port = preparation_port
+        self._attempt_store = attempt_store
+        self._now = now or (lambda: datetime.now(UTC))
+
+    def start(
+        self, *, job_id: str, resume_kind: str
+    ) -> ResumePreparationAttempt:
+        if resume_kind == "generic":
+            raise ResumePreparationError(
+                "A generic résumé cannot be used; prepare a tailored résumé or stop."
+            )
+        if resume_kind != "tailored":
+            raise ResumePreparationError("Choose a tailored résumé or stop.")
+        authorization = self._preparation_port.authorization_for_resume(job_id)
+        if authorization.job_id != job_id:
+            raise ResumePreparationError("The verified job authorization does not match this job.")
+        if authorization.expires_at <= self._now():
+            raise ResumePreparationError("The verified job authorization has expired.")
+        if authorization.unknown_mandatory_rule_codes:
+            raise ResumePreparationError("The job has an unknown mandatory condition.")
+        if authorization.eligibility != "eligible":
+            raise ResumePreparationError("The job is not eligible for tailored résumé preparation.")
+        revalidated = self._preparation_port.revalidate_resume_authorization(authorization)
+        if revalidated != authorization:
+            raise ResumePreparationError("The verified job authorization changed.")
+        if self._attempt_store is None:
+            raise ResumePreparationError("Durable résumé preparation metadata is unavailable.")
+        return self._attempt_store.record(revalidated)

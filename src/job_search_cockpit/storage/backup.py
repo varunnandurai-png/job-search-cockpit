@@ -64,8 +64,8 @@ def _write_owner_only(path: Path, content: bytes) -> None:
     path.chmod(0o600)
 
 
-def _vault_id(database_path: Path) -> str:
-    identity_path = database_path.parent / "vault.identity"
+def _vault_id(database_path: Path, identity_filename: str) -> str:
+    identity_path = database_path.parent / identity_filename
     try:
         identity = identity_path.read_text(encoding="ascii").strip()
     except FileNotFoundError:
@@ -106,7 +106,13 @@ def _backup_manifest(result: BackupResult) -> dict[str, Any]:
     }
 
 
-def create_safety_copy(database_path: Path, backup_dir: Path, reason: str) -> BackupResult:
+def create_safety_copy(
+    database_path: Path,
+    backup_dir: Path,
+    reason: str,
+    *,
+    identity_filename: str = "vault.identity",
+) -> BackupResult:
     if not database_path.is_file():
         raise BackupError("The active vault does not exist.")
     _protected_directory(database_path.parent)
@@ -125,7 +131,7 @@ def create_safety_copy(database_path: Path, backup_dir: Path, reason: str) -> Ba
             path=backup_path,
             manifest_path=manifest_path,
             sha256=checksum,
-            vault_id=_vault_id(database_path),
+            vault_id=_vault_id(database_path, identity_filename),
             alembic_revision=alembic_revision,
             reason=reason,
             created_at=created_at,

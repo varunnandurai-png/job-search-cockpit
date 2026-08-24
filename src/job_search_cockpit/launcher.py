@@ -17,6 +17,9 @@ from job_search_cockpit.facts.permissions import NamedUseService, PermissionServ
 from job_search_cockpit.facts.review import ReviewService
 from job_search_cockpit.imports.service import ImportService
 from job_search_cockpit.logging import configure_logging
+from job_search_cockpit.phase1_contract.matching_port import InternalPhase1MatchingPort
+from job_search_cockpit.phase1_contract.service import Phase1BuildMetadata, Phase1ContractService
+from job_search_cockpit.phase2.runtime import prepare_phase2_runtime
 from job_search_cockpit.ports import PreparedVault, ServiceBundle
 from job_search_cockpit.readiness.service import ReadinessService
 from job_search_cockpit.search_profile.service import seed_profile_v1
@@ -27,7 +30,7 @@ from job_search_cockpit.storage.recovery_ledger import InvalidRecoveryLedger
 from job_search_cockpit.web.app import create_app
 from job_search_cockpit.web.security import LaunchSession
 
-CURRENT_SCHEMA = "0001_phase_1_vault"
+CURRENT_SCHEMA = "0002_phase1_contract"
 
 
 class StartupError(RuntimeError):
@@ -128,12 +131,21 @@ def prepare_vault(settings: Settings) -> PreparedVault:
         _integrity, final_version = _sqlite_state(settings.database_path)
         if final_version != CURRENT_SCHEMA:
             raise StartupError("The prepared vault schema could not be verified.")
+        phase1_contract = Phase1ContractService(
+            coordinator,
+            Phase1BuildMetadata(
+                application_build="0.1.0",
+                acceptance_suite_version="phase1-acceptance-v1",
+            ),
+        )
         services = ServiceBundle(
             import_service=ImportService(settings, coordinator),
             review_service=ReviewService(coordinator),
             readiness_service=ReadinessService(coordinator),
             permission_service=permissions,
             named_use_service=NamedUseService(coordinator),
+            phase1_contract_service=phase1_contract,
+            phase1_matching_port=InternalPhase1MatchingPort(phase1_contract),
         )
         return PreparedVault(instance_lock, coordinator, coordinator.engine, services)
     except Exception:
@@ -159,6 +171,9 @@ class LaunchPlan:
             return
         self._closed = True
         self.socket.close()
+        phase2_runtime = self.prepared.phase2_runtime
+        if hasattr(phase2_runtime, "close"):
+            phase2_runtime.close()
         coordinator = self.prepared.coordinator
         if isinstance(coordinator, MutationCoordinator):
             coordinator.dispose()
@@ -167,6 +182,21 @@ class LaunchPlan:
 
 def build_launch_plan(settings: Settings) -> LaunchPlan:
     prepared = prepare_vault(settings)
+    phase1_port = prepared.services.phase1_matching_port
+    if phase1_port is None:
+        if isinstance(prepared.coordinator, MutationCoordinator):
+            prepared.coordinator.dispose()
+        prepared.instance_lock.release()
+        raise StartupError("The Phase I activation boundary is unavailable.")
+    try:
+        phase2_runtime = prepare_phase2_runtime(settings, phase1_port)
+    except Exception:
+        if isinstance(prepared.coordinator, MutationCoordinator):
+            prepared.coordinator.dispose()
+        prepared.instance_lock.release()
+        raise
+    prepared.phase2_runtime = phase2_runtime
+    prepared.services.phase2_activation_service = phase2_runtime.activation_service
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -180,6 +210,7 @@ def build_launch_plan(settings: Settings) -> LaunchPlan:
     except Exception:
         logging.getLogger("job_search_cockpit.launcher").exception("launch_plan_failed")
         listener.close()
+        phase2_runtime.close()
         coordinator = prepared.coordinator
         if isinstance(coordinator, MutationCoordinator):
             coordinator.dispose()

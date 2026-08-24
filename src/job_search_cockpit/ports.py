@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from sqlalchemy.orm import Session
 
+from job_search_cockpit.phase1_contract.snapshots import Phase1ActivationInputs
+
 if TYPE_CHECKING:
     from job_search_cockpit.facts.review import BulkReviewItem
     from job_search_cockpit.facts.types import Sensitivity
@@ -87,6 +89,14 @@ class ReadinessServicePort(Protocol):
     def report(self) -> object: ...
 
 
+class Phase1MatchingPort(Protocol):
+    def activation_inputs(self) -> Phase1ActivationInputs: ...
+
+    def revalidate_activation_inputs(
+        self, expected: Phase1ActivationInputs
+    ) -> Phase1ActivationInputs: ...
+
+
 class AppInstanceLockPort(Protocol):
     def release(self) -> None: ...
 
@@ -100,6 +110,9 @@ class ServiceBundle:
     audit_service: object | None = None
     permission_service: object | None = None
     named_use_service: object | None = None
+    phase1_contract_service: object | None = None
+    phase1_matching_port: Phase1MatchingPort | None = None
+    phase2_activation_service: object | None = None
 
 
 @dataclass(slots=True)
@@ -108,3 +121,4 @@ class PreparedVault:
     coordinator: MutationCoordinatorPort
     engine: object
     services: ServiceBundle
+    phase2_runtime: object | None = None

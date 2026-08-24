@@ -28,6 +28,8 @@ EXPECTED_TABLES = {
     "confidential_permission_events",
     "audit_events",
     "search_profile_versions",
+    "phase1_authority_state",
+    "phase1_acceptance_receipts",
 }
 
 
@@ -66,6 +68,7 @@ def test_migration_installs_update_and_delete_guards_for_immutable_tables(
         "claim_support_assertions",
         "named_uses",
         "confidential_permission_events",
+        "phase1_acceptance_receipts",
     }
     assert trigger_names == {
         f"prevent_{table}_{operation}"

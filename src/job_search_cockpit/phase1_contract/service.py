@@ -1,0 +1,197 @@
+from dataclasses import dataclass
+from datetime import UTC
+from uuid import uuid4
+
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
+
+from job_search_cockpit.config import Settings
+from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1AcceptanceReceiptSnapshot,
+    Phase1ActivationInputs,
+    Phase1ReadinessSnapshot,
+    SearchProfileSnapshot,
+    canonical_fingerprint,
+)
+from job_search_cockpit.readiness.service import ReadinessService
+from job_search_cockpit.search_profile.catalog import SearchProfilePayload
+from job_search_cockpit.search_profile.service import get_active_profile
+from job_search_cockpit.storage.database import session_factory_for
+from job_search_cockpit.storage.models import (
+    ImportRun,
+    ImportRunSource,
+    Phase1AcceptanceReceipt,
+    Phase1AuthorityState,
+)
+from job_search_cockpit.storage.mutation import MutationCoordinator
+
+
+class Phase1ContractUnavailable(RuntimeError):
+    """Raised when Phase I cannot safely authorize a later phase."""
+
+
+@dataclass(frozen=True, slots=True)
+class Phase1BuildMetadata:
+    application_build: str
+    acceptance_suite_version: str
+
+
+class Phase1ContractService:
+    def __init__(
+        self, coordinator: MutationCoordinator, build_metadata: Phase1BuildMetadata
+    ) -> None:
+        self._coordinator = coordinator
+        self._build_metadata = build_metadata
+
+    @staticmethod
+    def _schema_revision(session: Session) -> str:
+        revision = session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        return str(revision)
+
+    @staticmethod
+    def _receipt_snapshot(receipt: Phase1AcceptanceReceipt) -> Phase1AcceptanceReceiptSnapshot:
+        return Phase1AcceptanceReceiptSnapshot(
+            id=receipt.id,
+            application_build=receipt.application_build,
+            schema_revision=receipt.schema_revision,
+            acceptance_suite_version=receipt.acceptance_suite_version,
+            acceptance_run_id=receipt.acceptance_run_id,
+            result_fingerprint=receipt.result_fingerprint,
+            restore_high_water_mark=receipt.restore_high_water_mark,
+            accepted_at=receipt.accepted_at.astimezone(UTC).isoformat(),
+            fingerprint=receipt.fingerprint,
+        )
+
+    def record_acceptance(
+        self,
+        *,
+        acceptance_run_id: str,
+        result_fingerprint: str,
+        actor: str,
+        confirmation: str,
+    ) -> Phase1AcceptanceReceiptSnapshot:
+        if confirmation != "I ACCEPT THE PHASE I ACCEPTANCE RECEIPT":
+            raise Phase1ContractUnavailable("The Phase I acceptance confirmation is required.")
+        if not acceptance_run_id.strip() or len(result_fingerprint) != 64:
+            raise Phase1ContractUnavailable("The Phase I acceptance receipt is incomplete.")
+
+        def record(session: Session) -> Phase1AcceptanceReceiptSnapshot:
+            authority = session.get(Phase1AuthorityState, 1)
+            if authority is None:
+                raise Phase1ContractUnavailable("The Phase I authority state is unavailable.")
+            payload = {
+                "application_build": self._build_metadata.application_build,
+                "schema_revision": self._schema_revision(session),
+                "acceptance_suite_version": self._build_metadata.acceptance_suite_version,
+                "acceptance_run_id": acceptance_run_id.strip(),
+                "result": "passed",
+                "result_fingerprint": result_fingerprint,
+                "restore_high_water_mark": authority.restore_generation,
+                "actor": actor.strip(),
+                "confirmation": confirmation,
+            }
+            receipt = Phase1AcceptanceReceipt(
+                id=str(uuid4()),
+                **payload,
+                fingerprint=canonical_fingerprint(payload),
+            )
+            session.add(receipt)
+            session.flush()
+            return self._receipt_snapshot(receipt)
+
+        return self._coordinator.run(record, "record_phase1_acceptance", expected_version=None)
+
+    @staticmethod
+    def _blocker_codes(report: object) -> tuple[str, ...]:
+        fields = (
+            ("latest_import_complete", "latest_import_incomplete"),
+            ("active_profile_version", "active_profile_missing"),
+            ("open_conflicts", "open_conflicts"),
+            ("unresolved", "unresolved_facts"),
+            ("sensitivity_unreviewed", "confidentiality_unreviewed"),
+            ("stale", "stale_facts"),
+            ("unsupported_approved", "unsupported_approved_facts"),
+        )
+        blockers: list[str] = []
+        for attribute, code in fields:
+            value = getattr(report, attribute)
+            if attribute in {"latest_import_complete", "active_profile_version"}:
+                if not value:
+                    blockers.append(code)
+            elif int(value) > 0:
+                blockers.append(code)
+        return tuple(blockers)
+
+    def snapshot_activation_inputs(self) -> Phase1ActivationInputs:
+        report = ReadinessService(self._coordinator).report()
+        if not report.ready_for_phase_2:
+            raise Phase1ContractUnavailable("Phase I is not ready for Phase II.")
+        factory = session_factory_for(self._coordinator.engine)
+        with factory() as session:
+            receipt = session.scalar(
+                select(Phase1AcceptanceReceipt).order_by(
+                    Phase1AcceptanceReceipt.accepted_at.desc(), Phase1AcceptanceReceipt.id.desc()
+                )
+            )
+            if receipt is None:
+                raise Phase1ContractUnavailable("A durable Phase I acceptance receipt is required.")
+            authority = session.get(Phase1AuthorityState, 1)
+            latest_import = session.scalar(
+                select(ImportRun).order_by(ImportRun.committed_at.desc(), ImportRun.id.desc())
+            )
+            if authority is None or latest_import is None or not latest_import.complete:
+                raise Phase1ContractUnavailable("The latest Phase I import is not complete.")
+            source_rows = session.execute(
+                select(ImportRunSource.source_key, ImportRunSource.content_hash).where(
+                    ImportRunSource.import_run_id == latest_import.id,
+                    ImportRunSource.status == "ready",
+                )
+            ).tuples()
+            sources: dict[str, str | None] = {
+                source_key: content_hash for source_key, content_hash in source_rows
+            }
+            source_keys = {source.key for source in Settings().sources}
+            if set(sources) != source_keys or any(value is None for value in sources.values()):
+                raise Phase1ContractUnavailable("The latest Phase I import is incomplete.")
+            profile = get_active_profile(session)
+            profile_payload = SearchProfilePayload.model_validate(profile.payload_json)
+            source_hashes = dict(sorted((key, str(value)) for key, value in sources.items()))
+            readiness_payload = {
+                "ready_for_phase_2": report.ready_for_phase_2,
+                "manifest_version": latest_import.manifest_version,
+                "import_run_id": latest_import.id,
+                "source_hashes": source_hashes,
+                "active_profile_version": profile.version_number,
+                "readiness_generation": authority.readiness_generation,
+                "authority_high_water_mark": authority.authority_high_water_mark,
+                "restore_generation": authority.restore_generation,
+                "blocker_codes": self._blocker_codes(report),
+            }
+            readiness = Phase1ReadinessSnapshot(
+                ready_for_phase_2=report.ready_for_phase_2,
+                manifest_version=latest_import.manifest_version,
+                import_run_id=latest_import.id,
+                source_hashes=source_hashes,
+                active_profile_version=profile.version_number,
+                readiness_generation=authority.readiness_generation,
+                authority_high_water_mark=authority.authority_high_water_mark,
+                restore_generation=authority.restore_generation,
+                blocker_codes=self._blocker_codes(report),
+                fingerprint=canonical_fingerprint(readiness_payload),
+            )
+            profile_snapshot_payload = {
+                "version_number": profile.version_number,
+                "payload": profile_payload,
+                "active_profile_generation": authority.active_profile_generation,
+            }
+            profile_snapshot = SearchProfileSnapshot(
+                version_number=profile.version_number,
+                payload=profile_payload,
+                active_profile_generation=authority.active_profile_generation,
+                fingerprint=canonical_fingerprint(profile_snapshot_payload),
+            )
+            return Phase1ActivationInputs(
+                acceptance_receipt=self._receipt_snapshot(receipt),
+                readiness=readiness,
+                profile=profile_snapshot,
+            )

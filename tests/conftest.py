@@ -5,12 +5,18 @@ from pathlib import Path
 import pytest
 
 from job_search_cockpit.config import Settings, SourceSpec
+from job_search_cockpit.phase2.config import Phase2Settings
 from tests.support.builders import FixedClock
 
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings.for_tests(tmp_path / "data", tmp_path / "sources")
+
+
+@pytest.fixture
+def phase2_settings(tmp_path: Path) -> Phase2Settings:
+    return Phase2Settings(data_dir=tmp_path / "data")
 
 
 @pytest.fixture

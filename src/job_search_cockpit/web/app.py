@@ -12,7 +12,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from job_search_cockpit.config import Settings
 from job_search_cockpit.ports import PreparedVault
 from job_search_cockpit.storage.mutation import MutationCoordinator
-from job_search_cockpit.web.routes import history, home, imports, review, search_profile
+from job_search_cockpit.web.routes import history, home, imports, phase2, review, search_profile
 from job_search_cockpit.web.security import LaunchSession
 
 
@@ -95,4 +95,5 @@ def create_app(
     app.include_router(review.router)
     app.include_router(search_profile.router)
     app.include_router(history.router)
+    app.include_router(phase2.router)
     return app

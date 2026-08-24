@@ -409,6 +409,34 @@ class SearchProfileVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class Phase1AuthorityState(Base):
+    __tablename__ = "phase1_authority_state"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_phase1_authority_singleton"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    authority_high_water_mark: Mapped[int] = mapped_column(Integer, default=0)
+    readiness_generation: Mapped[int] = mapped_column(Integer, default=0)
+    active_profile_generation: Mapped[int] = mapped_column(Integer, default=0)
+    restore_generation: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Phase1AcceptanceReceipt(Base):
+    __tablename__ = "phase1_acceptance_receipts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    application_build: Mapped[str] = mapped_column(String(160))
+    schema_revision: Mapped[str] = mapped_column(String(80))
+    acceptance_suite_version: Mapped[str] = mapped_column(String(120))
+    acceptance_run_id: Mapped[str] = mapped_column(String(160), unique=True)
+    result: Mapped[str] = mapped_column(String(16))
+    result_fingerprint: Mapped[str] = mapped_column(String(64))
+    restore_high_water_mark: Mapped[int] = mapped_column(Integer)
+    actor: Mapped[str] = mapped_column(String(120))
+    confirmation: Mapped[str] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 Index(
     "uq_source_occurrence_null_safe_identity",
     SourceOccurrence.source_key,

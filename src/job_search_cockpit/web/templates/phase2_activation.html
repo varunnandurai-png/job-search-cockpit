@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Phase II activation · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p>Private job-search setup</p>
+  <h1>Phase II activation</h1>
+  {% if state == "active" %}
+    <p>Phase II is enabled for setup only.</p>
+  {% elif state == "suspended" %}
+    <p>Phase II is suspended.</p>
+  {% else %}
+    <p>Phase II is not enabled.</p>
+  {% endif %}
+  <p>No job sources have been contacted. Job providers are not approved, and discovery, scoring, shortlists, documents, and applications remain disabled.</p>
+
+  {% if blocker %}
+    <section aria-labelledby="activation-blocker">
+      <h2 id="activation-blocker">What needs attention</h2>
+      <p>{{ blocker }}</p>
+    </section>
+  {% else %}
+    <section aria-labelledby="activation-confirmation">
+      <h2 id="activation-confirmation">Enable setup</h2>
+      <p>Type the confirmation below to record this reversible approval. This does not approve a provider or fetch a job.</p>
+      <form method="post" action="/phase-2/activate">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="confirmation">Confirmation</label>
+        <input id="confirmation" name="confirmation" required autocomplete="off">
+        <label for="reason">Reason (optional)</label>
+        <input id="reason" name="reason" autocomplete="off">
+        <button class="button button--primary" type="submit">Enable Phase II setup</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

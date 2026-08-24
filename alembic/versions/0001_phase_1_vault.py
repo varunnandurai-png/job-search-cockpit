@@ -26,6 +26,7 @@ IMMUTABLE_TABLES = (
     "claim_support_assertions",
     "named_uses",
     "confidential_permission_events",
+    "phase1_acceptance_receipts",
 )
 
 

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from job_search_cockpit.search_profile.catalog import SearchProfilePayload, build_profile_v1
 from job_search_cockpit.storage.database import session_factory_for
-from job_search_cockpit.storage.models import AuditEvent, SearchProfileVersion
+from job_search_cockpit.storage.models import AuditEvent, Phase1AuthorityState, SearchProfileVersion
 from job_search_cockpit.storage.mutation import MutationCoordinator
 
 
@@ -111,6 +111,10 @@ def confirm_profile_change(
                 "The profile changes no longer match the reviewed preview."
             )
         active.active = False
+        authority = session.get(Phase1AuthorityState, 1)
+        if authority is None:
+            raise ProfileVersionConflict("The Phase I authority state is unavailable.")
+        authority.active_profile_generation += 1
         version = SearchProfileVersion(
             id=str(uuid4()),
             version_number=active.version_number + 1,

@@ -1,7 +1,7 @@
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
@@ -14,6 +14,9 @@ from job_search_cockpit.config import Settings
 from job_search_cockpit.facts.permissions import NamedUseService, PermissionService
 from job_search_cockpit.facts.review import ReviewService
 from job_search_cockpit.imports.service import ImportService
+from job_search_cockpit.phase1_contract.matching_port import InternalPhase1MatchingPort
+from job_search_cockpit.phase1_contract.service import Phase1BuildMetadata, Phase1ContractService
+from job_search_cockpit.phase2.runtime import prepare_phase2_runtime
 from job_search_cockpit.ports import PreparedVault, ServiceBundle
 from job_search_cockpit.readiness.service import ReadinessService
 from job_search_cockpit.search_profile.service import seed_profile_v1
@@ -32,13 +35,22 @@ class ParsedCookie:
 
 @contextmanager
 def build_test_app(
-    settings: Settings, *, launch: LaunchSession | None = None
+    settings: Settings,
+    *,
+    launch: LaunchSession | None = None,
+    configure_prepared: Callable[[PreparedVault], None] | None = None,
 ) -> Iterator[tuple[LaunchSession, TestClient]]:
     upgrade_database(f"sqlite:///{settings.database_path}")
     engine = create_engine_for(settings)
     lock = AppInstanceLock.acquire(settings)
     coordinator = MutationCoordinator(settings, engine, lock)
     seed_profile_v1(coordinator)
+    phase1_contract = Phase1ContractService(
+        coordinator,
+        Phase1BuildMetadata("test-build", "phase1-acceptance-test-v1"),
+    )
+    phase1_port = InternalPhase1MatchingPort(phase1_contract)
+    phase2_runtime = prepare_phase2_runtime(settings, phase1_port)
     launch = launch or LaunchSession.fresh()
     prepared = PreparedVault(
         lock,
@@ -50,13 +62,20 @@ def build_test_app(
             readiness_service=ReadinessService(coordinator),
             permission_service=PermissionService(coordinator),
             named_use_service=NamedUseService(coordinator),
+            phase1_contract_service=phase1_contract,
+            phase1_matching_port=phase1_port,
+            phase2_activation_service=phase2_runtime.activation_service,
         ),
+        phase2_runtime,
     )
+    if configure_prepared is not None:
+        configure_prepared(prepared)
     app = create_app(settings, prepared, launch, 8765)
     try:
         with TestClient(app, base_url="http://127.0.0.1:8765") as client:
             yield launch, client
     finally:
+        phase2_runtime.close()
         coordinator.dispose()
         lock.release()
 
@@ -92,8 +111,10 @@ class AuthenticatedClient:
 
 
 @contextmanager
-def authenticated_test_app(settings: Settings) -> Iterator[AuthenticatedClient]:
-    with build_test_app(settings) as (launch, client):
+def authenticated_test_app(
+    settings: Settings, *, configure_prepared: Callable[[PreparedVault], None] | None = None
+) -> Iterator[AuthenticatedClient]:
+    with build_test_app(settings, configure_prepared=configure_prepared) as (launch, client):
         response = client.get(f"/launch?token={launch.token}")
         assert response.status_code == 200
         yield AuthenticatedClient(client, launch.csrf_token, "http://127.0.0.1:8765")
@@ -118,6 +139,12 @@ def running_test_app(settings: Settings) -> Iterator[RunningApp]:
     lock = AppInstanceLock.acquire(settings)
     coordinator = MutationCoordinator(settings, engine, lock)
     seed_profile_v1(coordinator)
+    phase1_contract = Phase1ContractService(
+        coordinator,
+        Phase1BuildMetadata("test-build", "phase1-acceptance-test-v1"),
+    )
+    phase1_port = InternalPhase1MatchingPort(phase1_contract)
+    phase2_runtime = prepare_phase2_runtime(settings, phase1_port)
     launch = LaunchSession.fresh()
     prepared = PreparedVault(
         lock,
@@ -129,7 +156,11 @@ def running_test_app(settings: Settings) -> Iterator[RunningApp]:
             readiness_service=ReadinessService(coordinator),
             permission_service=PermissionService(coordinator),
             named_use_service=NamedUseService(coordinator),
+            phase1_contract_service=phase1_contract,
+            phase1_matching_port=phase1_port,
+            phase2_activation_service=phase2_runtime.activation_service,
         ),
+        phase2_runtime,
     )
     app = create_app(settings, prepared, launch, port)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
@@ -142,6 +173,7 @@ def running_test_app(settings: Settings) -> Iterator[RunningApp]:
         server.should_exit = True
         thread.join(timeout=2)
         listener.close()
+        phase2_runtime.close()
         coordinator.dispose()
         lock.release()
         raise RuntimeError("The test web server did not start.")
@@ -156,6 +188,7 @@ def running_test_app(settings: Settings) -> Iterator[RunningApp]:
         server.should_exit = True
         thread.join(timeout=5)
         listener.close()
+        phase2_runtime.close()
         coordinator.dispose()
         lock.release()
 

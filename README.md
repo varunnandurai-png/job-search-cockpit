@@ -33,3 +33,19 @@ Do not replace or edit SQLite, manifest, WAL, SHM, or recovery files by hand. If
 ## What Phase 1 does not do
 
 Phase 1 does not search for jobs, scrape job boards, score roles, generate resumes, submit applications, or contact anyone. It imports the four curated sources read-only, surfaces disagreements, records explicit review decisions, protects confidential facts, locks the target search profile, and reports whether the verified vault is ready for Phase 2.
+
+## Phase II-A: safe activation foundation
+
+Phase II-A adds a separate local job-search catalog and a setup-only activation screen. It can use only immutable, approved Phase I readiness and locked-profile snapshots; it never reads Phase I tables directly.
+
+Before Phase II setup can be enabled, the cockpit needs a durable Phase I acceptance receipt and the exact confirmation `ENABLE PHASE II`. The approval is reversible and automatically suspends if the approved Phase I state or either local catalog is restored or changes.
+
+Phase II-A does not approve a provider, contact a job source, fetch a job, release career facts, score or shortlist jobs, create documents, or submit applications.
+
+To verify the local foundation after setup:
+
+```bash
+uv run ruff check src tests
+uv run mypy src
+uv run pytest -v
+```
