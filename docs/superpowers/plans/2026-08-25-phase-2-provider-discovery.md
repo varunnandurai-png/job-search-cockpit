@@ -50,7 +50,7 @@
 
 **Produces:** `ProviderCredentials`, `ProviderLimits`, `ProviderRequest`, and `ProviderListing` types for the adapters.
 
-- [ ] **Step 1: Write the failing no-secret configuration test**
+- [x] **Step 1: Write the failing no-secret configuration test**
 
 ```python
 def test_provider_credentials_fail_closed_when_a_required_value_is_absent(
@@ -62,13 +62,13 @@ def test_provider_credentials_fail_closed_when_a_required_value_is_absent(
         ProviderCredentials.from_environment()
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/unit/test_provider_config.py::test_provider_credentials_fail_closed_when_a_required_value_is_absent -q`
 
 Expected: FAIL because the provider-configuration module does not exist.
 
-- [ ] **Step 3: Implement the smallest fail-closed configuration boundary**
+- [x] **Step 3: Implement the smallest fail-closed configuration boundary**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -89,13 +89,13 @@ class ProviderCredentials:
 
 Load `.env` only once at process startup with a strict allowlist for the two exact keys; ignore comments and blank lines, reject duplicate keys, and never execute the file as shell code. Make `ProviderRequest` contain only a provider ID, role-query ID, location ID, listing limit, and optional Apify charge limit. Make `ProviderListing` contain only provider listing ID, canonical URL, title, employer name, locations, posted time, public description, compensation text, and retrieval time.
 
-- [ ] **Step 4: Run the focused test to verify it passes**
+- [x] **Step 4: Run the focused test to verify it passes**
 
 Run: `uv run pytest tests/unit/test_provider_config.py -q`
 
 Expected: PASS; output must not contain either environment variable value.
 
-- [ ] **Step 5: Run static checks**
+- [x] **Step 5: Run static checks**
 
 Run: `uv run ruff check src/job_search_cockpit/phase2/provider_config.py src/job_search_cockpit/phase2/discovery_types.py tests/unit/test_provider_config.py && uv run mypy src`
 
