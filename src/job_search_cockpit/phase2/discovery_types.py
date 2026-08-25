@@ -24,6 +24,13 @@ class ProviderRequest:
             Decimal("0") < self.max_charge_usd <= ProviderLimits().max_apify_charge_usd
         ):
             raise ValueError("Apify charge limit is outside the approved pilot cap")
+        if (
+            self.provider_id in {"apify-linkedin", "apify-naukri"}
+            and self.listing_limit <= ProviderLimits().micro_listing_limit
+            and self.max_charge_usd is not None
+            and self.max_charge_usd > ProviderLimits().micro_apify_charge_usd
+        ):
+            raise ValueError("charge limit exceeds the approved micro-run cap")
 
 
 @dataclass(frozen=True, slots=True)
