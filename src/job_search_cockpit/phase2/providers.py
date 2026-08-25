@@ -11,19 +11,24 @@ from job_search_cockpit.phase2.discovery_types import ProviderListing, ProviderR
 from job_search_cockpit.phase2.provider_config import ProviderCredentials
 
 APIFY_LINKEDIN_ACTOR = "curious_coder/linkedin-jobs-scraper"
-APIFY_NAUKRI_ACTOR = "crawlerbros/naukri-scraper"
+APIFY_NAUKRI_ACTOR = "automation-lab/naukri-scraper"
+APIFY_GLASSDOOR_ACTOR = "valig/glassdoor-jobs-scraper"
 JSEARCH_HOST = "jsearch.p.rapidapi.com"
 JSEARCH_SEARCH_ENDPOINT = "/search-v2"
 
-_APIFY_ACTORS = frozenset({APIFY_LINKEDIN_ACTOR, APIFY_NAUKRI_ACTOR})
+_APIFY_ACTORS = frozenset(
+    {APIFY_LINKEDIN_ACTOR, APIFY_NAUKRI_ACTOR, APIFY_GLASSDOOR_ACTOR}
+)
 _APIFY_BASE_URL = "https://api.apify.com/v2/acts"
 _APIFY_PROVIDER_IDS = {
     APIFY_LINKEDIN_ACTOR: "apify-linkedin",
     APIFY_NAUKRI_ACTOR: "apify-naukri",
+    APIFY_GLASSDOOR_ACTOR: "apify-glassdoor",
 }
 _APIFY_LISTING_HOSTS = {
     APIFY_LINKEDIN_ACTOR: "www.linkedin.com",
     APIFY_NAUKRI_ACTOR: "www.naukri.com",
+    APIFY_GLASSDOOR_ACTOR: "www.glassdoor.com",
 }
 
 
@@ -65,11 +70,17 @@ class ApifyProvider:
                 "location": request.location_id,
                 "limitPerSource": request.listing_limit,
             }
-        else:
+        elif self.actor_id == APIFY_NAUKRI_ACTOR:
             payload = {
                 "keyword": request.role_query_id,
                 "location": request.location_id,
-                "maxItems": request.listing_limit,
+                "maxJobs": request.listing_limit,
+            }
+        else:
+            payload = {
+                "keywords": request.role_query_id,
+                "location": request.location_id,
+                "limit": request.listing_limit,
             }
         return _PreparedProviderRequest(
             url=f"{_APIFY_BASE_URL}/{actor_path}/run-sync-get-dataset-items",
@@ -128,17 +139,31 @@ class ApifyProvider:
                 compensation_text=_compensation_text(item.get("salaryInfo")),
                 retrieved_at=retrieved_at,
             )
+        if self.actor_id == APIFY_NAUKRI_ACTOR:
+            return ProviderListing(
+                provider_listing_id=_required_text(item, "jobId"),
+                canonical_url=_canonical_listing_url(
+                    _required_text(item, "jobUrl"), _APIFY_LISTING_HOSTS[self.actor_id]
+                ),
+                title=_optional_text(item, "title"),
+                employer_name=_optional_text(item, "companyName"),
+                locations=_locations(item.get("location")),
+                posted_at=_optional_datetime(item.get("postedDate")),
+                public_description=_optional_text(item, "jobDescription"),
+                compensation_text=_optional_nullable_text(item.get("salary")),
+                retrieved_at=retrieved_at,
+            )
         return ProviderListing(
-            provider_listing_id=_required_text(item, "id"),
+            provider_listing_id=_required_identifier(item, "id"),
             canonical_url=_canonical_listing_url(
                 _required_text(item, "url"), _APIFY_LISTING_HOSTS[self.actor_id]
             ),
             title=_optional_text(item, "title"),
-            employer_name=_optional_text(item, "companyName"),
-            locations=_locations(item.get("location")),
-            posted_at=_optional_datetime(item.get("postedAt")),
+            employer_name=_nested_optional_text(item, "employer", "name"),
+            locations=_locations(_nested_value(item, "location", "name")),
+            posted_at=None,
             public_description=_optional_text(item, "description"),
-            compensation_text=_optional_nullable_text(item.get("salary")),
+            compensation_text=_compensation_text(item.get("pay")),
             retrieved_at=retrieved_at,
         )
 
@@ -222,6 +247,13 @@ def _required_text(item: dict[object, object], field_name: str) -> str:
     return value.strip()
 
 
+def _required_identifier(item: dict[object, object], field_name: str) -> str:
+    value = item.get(field_name)
+    if isinstance(value, int) and value >= 0:
+        return str(value)
+    return _required_text(item, field_name)
+
+
 def _optional_text(item: dict[object, object], field_name: str) -> str:
     value = item.get(field_name)
     return value.strip() if isinstance(value, str) else ""
@@ -231,6 +263,16 @@ def _optional_nullable_text(value: object) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value.strip()
+
+
+def _nested_value(item: dict[object, object], parent: str, field_name: str) -> object:
+    value = item.get(parent)
+    return value.get(field_name) if isinstance(value, dict) else None
+
+
+def _nested_optional_text(item: dict[object, object], parent: str, field_name: str) -> str:
+    value = _nested_value(item, parent, field_name)
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _locations(value: object) -> tuple[str, ...]:
@@ -312,6 +354,7 @@ def _is_public_hostname(hostname: str) -> bool:
 
 
 __all__ = [
+    "APIFY_GLASSDOOR_ACTOR",
     "APIFY_LINKEDIN_ACTOR",
     "APIFY_NAUKRI_ACTOR",
     "JSEARCH_HOST",

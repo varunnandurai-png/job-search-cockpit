@@ -70,6 +70,7 @@ class ProviderCredentials:
 class ProviderLimits:
     linkedin_listing_limit: int = 40
     naukri_listing_limit: int = 25
+    glassdoor_listing_limit: int = 25
     jsearch_listing_limit: int = 25
     max_apify_charge_usd: Decimal = Decimal("0.50")
     micro_listing_limit: int = 5
@@ -82,6 +83,8 @@ class ProviderLimits:
             return limits.linkedin_listing_limit
         if provider_id == "apify-naukri":
             return limits.naukri_listing_limit
+        if provider_id == "apify-glassdoor":
+            return limits.glassdoor_listing_limit
         if provider_id == "jsearch":
             return limits.jsearch_listing_limit
         raise ValueError("unsupported provider")

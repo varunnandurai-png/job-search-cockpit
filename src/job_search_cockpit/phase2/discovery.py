@@ -28,6 +28,7 @@ from job_search_cockpit.phase2.models import (
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
 from job_search_cockpit.phase2.provider_config import ProviderCredentials, ProviderLimits
 from job_search_cockpit.phase2.providers import (
+    APIFY_GLASSDOOR_ACTOR,
     APIFY_LINKEDIN_ACTOR,
     APIFY_NAUKRI_ACTOR,
     ApifyProvider,
@@ -174,6 +175,17 @@ class DiscoveryService:
                     listing_limit or limits.naukri_listing_limit, charge_limit
                 ),
                 ApifyProvider(APIFY_NAUKRI_ACTOR),
+            ),
+            _ProviderPlan(
+                "apify-glassdoor",
+                ProviderRequest(
+                    "apify-glassdoor",
+                    role,
+                    location,
+                    listing_limit or limits.glassdoor_listing_limit,
+                    charge_limit,
+                ),
+                ApifyProvider(APIFY_GLASSDOOR_ACTOR),
             ),
             _ProviderPlan(
                 "jsearch",

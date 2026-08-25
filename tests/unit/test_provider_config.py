@@ -11,6 +11,7 @@ from job_search_cockpit.phase2.provider_config import (
     read_provider_env_file,
 )
 from job_search_cockpit.phase2.providers import (
+    APIFY_GLASSDOOR_ACTOR,
     APIFY_LINKEDIN_ACTOR,
     APIFY_NAUKRI_ACTOR,
     ApifyProvider,
@@ -135,7 +136,7 @@ def test_apify_naukri_request_is_bounded_to_the_approved_https_actor_endpoint() 
     )
 
     assert prepared.url == (
-        "https://api.apify.com/v2/acts/crawlerbros~naukri-scraper/"
+        "https://api.apify.com/v2/acts/automation-lab~naukri-scraper/"
         "run-sync-get-dataset-items"
     )
     assert prepared.params == {
@@ -147,7 +148,35 @@ def test_apify_naukri_request_is_bounded_to_the_approved_https_actor_endpoint() 
     assert prepared.json == {
         "keyword": "senior-product-manager",
         "location": "bengaluru",
-        "maxItems": 5,
+        "maxJobs": 5,
+    }
+
+
+def test_apify_glassdoor_request_is_bounded_to_the_approved_https_actor_endpoint() -> None:
+    prepared = ApifyProvider(APIFY_GLASSDOOR_ACTOR).prepare(
+        ProviderRequest(
+            provider_id="apify-glassdoor",
+            role_query_id="senior-product-manager",
+            location_id="bengaluru",
+            listing_limit=5,
+            max_charge_usd=Decimal("0.10"),
+        )
+    )
+
+    assert prepared.url == (
+        "https://api.apify.com/v2/acts/valig~glassdoor-jobs-scraper/"
+        "run-sync-get-dataset-items"
+    )
+    assert prepared.params == {
+        "format": "json",
+        "limit": "5",
+        "maxItems": "5",
+        "maxTotalChargeUsd": "0.10",
+    }
+    assert prepared.json == {
+        "keywords": "senior-product-manager",
+        "location": "bengaluru",
+        "limit": 5,
     }
 
 

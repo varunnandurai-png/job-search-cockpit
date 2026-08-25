@@ -13,10 +13,11 @@ The first manual pilot uses these read-only sources:
 
 - Apify LinkedIn Actor: `curious_coder/linkedin-jobs-scraper`, at most 40
   listings.
-- Apify Naukri Actor: `crawlerbros/naukri-scraper`, at most 25 listings.
+- Apify Naukri Actor: `automation-lab/naukri-scraper`, at most 25 listings.
+- Apify Glassdoor Actor: `valig/glassdoor-jobs-scraper`, at most 25 listings.
 - JSearch through the configured RapidAPI subscription: one request.
 
-The Apify run uses a US$0.50 maximum charge when the selected Actor supports a
+Each Apify run uses a US$0.50 maximum charge when the selected Actor supports a
 per-run charge limit. The application also enforces the listing caps. No
 scheduled runs, automatic retries, browser automation, provider sign-in,
 submission, uploads, sharing, or notifications are in scope.
@@ -74,7 +75,11 @@ candidate assessment or authorization rather than being rewritten in place.
   provider access, and that credentials never enter persistence or output. The
   user-authorized real-data micro-run verifies source retrieval, catalog
   persistence, deduplication, and the rule that a listing cannot directly
-  create a preparation attempt, document, or submission.
+  create a preparation attempt, document, or submission. Source selections are
+  reviewed against the Apify Store pages:
+  https://apify.com/curious_coder/linkedin-jobs-scraper,
+  https://apify.com/automation-lab/naukri-scraper, and
+  https://apify.com/valig/glassdoor-jobs-scraper.
 
 ## Deferred work
 
