@@ -32,7 +32,23 @@ def test_phase2_schema_has_no_phase1_tables(phase2_settings: Phase2Settings) -> 
         "phase2_authority_state",
         "phase2_activation_grants",
         "phase2_resume_preparation_attempts",
+        "phase2_reusable_answers",
+        "phase2_application_drafts",
+        "phase2_application_draft_answers",
+        "phase2_application_draft_review_flags",
     } <= tables
+
+    forbidden = ("password", "one_time_code", "cookie", "browser_session", "submission")
+    for table in {
+        "phase2_reusable_answers",
+        "phase2_application_drafts",
+        "phase2_application_draft_answers",
+        "phase2_application_draft_review_flags",
+    }:
+        columns = {
+            row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+        }
+        assert not columns.intersection(forbidden)
 
 
 def test_resume_preparation_attempt_metadata_is_append_only(

@@ -16,6 +16,19 @@ def test_phase2_page_explains_that_setup_is_not_live(vault_settings) -> None:
     assert "providers are not approved" in page.text
 
 
+def test_phase2_review_page_stays_fail_closed_without_verified_job_readiness(
+    vault_settings,
+) -> None:
+    with authenticated_test_app(vault_settings) as client:
+        page = client.get("/phase-2/review")
+
+    assert page.status_code == 200
+    assert "Verified job readiness is unavailable" in page.text
+    assert "No local final artefacts exist" in page.text
+    assert "Drive: not implemented" in page.text
+    assert '<button type="button" disabled>Finalise résumé for this job</button>' in page.text
+
+
 def test_phase2_activation_post_uses_csrf_and_redirect(vault_settings) -> None:
     with authenticated_test_app(vault_settings) as client:
         response = client.post(

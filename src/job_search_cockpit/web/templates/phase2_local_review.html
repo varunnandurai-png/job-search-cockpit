@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Local review · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p>Private local review</p>
+  <h1>Résumé finalisation review</h1>
+  <p>Verified job readiness is unavailable. No job has been authorised for preparation.</p>
+
+  <section aria-labelledby="eligibility-status">
+    <h2 id="eligibility-status">Eligibility</h2>
+    <p>Unavailable until a future verified discovery system supplies a job-specific authorization.</p>
+  </section>
+
+  <section aria-labelledby="requirements-status">
+    <h2 id="requirements-status">Requirements and Phase I review</h2>
+    <p>Supported requirements, gaps, and pending Phase I reviews are unavailable because no authorised job requirements exist.</p>
+  </section>
+
+  <section aria-labelledby="finalisation-status">
+    <h2 id="finalisation-status">Final local artefacts</h2>
+    <p>No local final artefacts exist. A PDF/DOCX pair can only be created after an explicit action for a verified job.</p>
+    <button type="button" disabled>Finalise résumé for this job</button>
+  </section>
+
+  <section aria-labelledby="drive-status">
+    <h2 id="drive-status">Storage integration</h2>
+    <p>Drive: not implemented. Sign-in, consent, upload, sharing, and retries are unavailable.</p>
+  </section>
+{% endblock %}

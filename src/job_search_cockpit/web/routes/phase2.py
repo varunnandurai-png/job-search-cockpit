@@ -30,6 +30,16 @@ def activation_page(request: Request) -> Response:
     return response
 
 
+@router.get("/phase-2/review", response_class=HTMLResponse)
+def local_review_page(request: Request) -> Response:
+    response: Response = request.app.state.templates.TemplateResponse(
+        request,
+        "phase2_local_review.html",
+        {"csrf_token": request.app.state.launch_session.csrf_token},
+    )
+    return response
+
+
 @router.post("/phase-2/activate")
 async def activate(request: Request) -> Response:
     if not request.app.state.launch_session.valid_csrf((await request.form()).get("csrf_token")):

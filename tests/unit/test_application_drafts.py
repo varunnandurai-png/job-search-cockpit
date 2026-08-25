@@ -1,9 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
 from job_search_cockpit.phase2.application_drafts import (
+    ApprovedAnswerReference,
     ReusableAnswer,
     answer_reusable_for,
     question_label_fingerprint,
+    validate_approved_answer_reference,
 )
 
 
@@ -34,3 +36,13 @@ def test_reusable_answer_expires_after_forty_five_days() -> None:
     )
 
     assert answer_reusable_for(answer, "Work authorization", answer.expires_at) is False
+
+
+def test_approved_reusable_answer_requires_its_revision_in_the_phase1_projection() -> None:
+    reference = ApprovedAnswerReference(
+        phase1_revision_id="sanitized-revision-1",
+        projection_fingerprint="a" * 64,
+        projection_revision_ids=("sanitized-revision-2",),
+    )
+
+    assert validate_approved_answer_reference(reference) is False

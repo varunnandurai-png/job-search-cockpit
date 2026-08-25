@@ -9,7 +9,7 @@ from job_search_cockpit.phase2.resume_safety import (
     VerifiedJobPreparationAuthorization,
 )
 
-FUTURE_EXPIRY = datetime(2026, 8, 25, tzinfo=UTC)
+FUTURE_EXPIRY = datetime(2099, 1, 1, tzinfo=UTC)
 
 
 def _authorization(**changes: object) -> VerifiedJobPreparationAuthorization:

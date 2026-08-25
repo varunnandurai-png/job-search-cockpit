@@ -1,7 +1,16 @@
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -67,4 +76,72 @@ class Phase2ResumePreparationAttempt(Phase2Base):
     phase1_restore_generation: Mapped[int | None] = mapped_column(Integer)
     phase2_activation_generation: Mapped[int | None] = mapped_column(Integer)
     phase2_restore_generation: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ReusableAnswer(Phase2Base):
+    __tablename__ = "phase2_reusable_answers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    question_label_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_revision_id: Mapped[str] = mapped_column(String(120))
+    projection_fingerprint: Mapped[str] = mapped_column(String(64))
+    supersedes_answer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("phase2_reusable_answers.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Phase2ApplicationDraft(Phase2Base):
+    __tablename__ = "phase2_application_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "state = 'manual_review_required_no_submission'",
+            name="ck_phase2_application_draft_no_submission",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    resume_preparation_attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_resume_preparation_attempts.id")
+    )
+    job_id: Mapped[str] = mapped_column(String(120))
+    job_revision_id: Mapped[str] = mapped_column(String(120))
+    final_resume_version_id: Mapped[str | None] = mapped_column(String(120))
+    state: Mapped[str] = mapped_column(
+        String(64), default="manual_review_required_no_submission"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ApplicationDraftAnswer(Phase2Base):
+    __tablename__ = "phase2_application_draft_answers"
+    __table_args__ = (UniqueConstraint("application_draft_id", "reusable_answer_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    application_draft_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_application_drafts.id")
+    )
+    reusable_answer_id: Mapped[str] = mapped_column(ForeignKey("phase2_reusable_answers.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ApplicationDraftReviewFlag(Phase2Base):
+    __tablename__ = "phase2_application_draft_review_flags"
+    __table_args__ = (
+        CheckConstraint(
+            "reason = 'approved_answer_superseded'",
+            name="ck_phase2_application_draft_review_flag_reason",
+        ),
+        UniqueConstraint("application_draft_id", "superseded_answer_id", "replacement_answer_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    application_draft_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_application_drafts.id")
+    )
+    superseded_answer_id: Mapped[str] = mapped_column(ForeignKey("phase2_reusable_answers.id"))
+    replacement_answer_id: Mapped[str] = mapped_column(ForeignKey("phase2_reusable_answers.id"))
+    reason: Mapped[str] = mapped_column(String(64), default="approved_answer_superseded")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -65,6 +65,7 @@ class ResumePreparationAttempt:
     job_revision_id: str
     authorization_id: str
     phase2_activation_generation: int
+    authorization: VerifiedJobPreparationAuthorization
 
 
 class ResumePreparationAttemptStore:
@@ -105,6 +106,7 @@ class ResumePreparationAttemptStore:
                 job_revision_id=attempt.job_revision_id,
                 authorization_id=attempt.authorization_id,
                 phase2_activation_generation=attempt.phase2_activation_generation,
+                authorization=authorization,
             )
 
         try:
