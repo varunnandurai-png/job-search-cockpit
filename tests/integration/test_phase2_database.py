@@ -36,6 +36,7 @@ def test_phase2_schema_has_no_phase1_tables(phase2_settings: Phase2Settings) -> 
         "phase2_application_drafts",
         "phase2_application_draft_answers",
         "phase2_application_draft_review_flags",
+        "phase2_final_artifacts",
     } <= tables
 
     forbidden = ("password", "one_time_code", "cookie", "browser_session", "submission")
@@ -44,11 +45,85 @@ def test_phase2_schema_has_no_phase1_tables(phase2_settings: Phase2Settings) -> 
         "phase2_application_drafts",
         "phase2_application_draft_answers",
         "phase2_application_draft_review_flags",
+        "phase2_final_artifacts",
     }:
         columns = {
             row[1] for row in connection.execute(f"PRAGMA table_info({table})")
         }
         assert not columns.intersection(forbidden)
+
+
+def test_final_artifact_metadata_is_append_only_and_contains_no_document_content(
+    phase2_settings: Phase2Settings,
+) -> None:
+    upgrade_phase2_database(f"sqlite:///{phase2_settings.database_path}")
+
+    with sqlite3.connect(phase2_settings.database_path) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(phase2_final_artifacts)")
+        }
+
+        assert {
+            "id",
+            "resume_preparation_attempt_id",
+            "job_id",
+            "job_revision_id",
+            "projection_fingerprint",
+            "content_fingerprint",
+            "docx_relative_path",
+            "docx_sha256",
+            "pdf_relative_path",
+            "pdf_sha256",
+            "created_at",
+        } <= columns
+        assert not columns.intersection(
+            {"docx_content", "pdf_content", "draft", "revision", "answer_wording"}
+        )
+        connection.execute(
+            """
+            INSERT INTO phase2_resume_preparation_attempts (
+                id, job_id, job_revision_id, authorization_id, authorization_expires_at,
+                phase2_activation_generation, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "attempt-final-artifact-1",
+                "sanitized-job-1",
+                "sanitized-revision-1",
+                "sanitized-authorization-final-artifact-1",
+                "2026-08-24T09:15:00+00:00",
+                1,
+                "2026-08-24T09:00:00+00:00",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO phase2_final_artifacts (
+                id, resume_preparation_attempt_id, job_id, job_revision_id,
+                projection_fingerprint, content_fingerprint,
+                docx_relative_path, docx_sha256, pdf_relative_path, pdf_sha256, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "final-artifact-1",
+                "attempt-final-artifact-1",
+                "sanitized-job-1",
+                "sanitized-revision-1",
+                "a" * 64,
+                "b" * 64,
+                "final-artifact-1.docx",
+                "c" * 64,
+                "final-artifact-1.pdf",
+                "d" * 64,
+                "2026-08-24T09:00:00+00:00",
+            ),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "UPDATE phase2_final_artifacts SET job_id = 'other' "
+                "WHERE id = 'final-artifact-1'"
+            )
 
 
 def test_resume_preparation_attempt_metadata_is_append_only(

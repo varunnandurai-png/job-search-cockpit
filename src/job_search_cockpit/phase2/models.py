@@ -145,3 +145,22 @@ class Phase2ApplicationDraftReviewFlag(Phase2Base):
     replacement_answer_id: Mapped[str] = mapped_column(ForeignKey("phase2_reusable_answers.id"))
     reason: Mapped[str] = mapped_column(String(64), default="approved_answer_superseded")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2FinalArtifact(Phase2Base):
+    __tablename__ = "phase2_final_artifacts"
+    __table_args__ = (UniqueConstraint("resume_preparation_attempt_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    resume_preparation_attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_resume_preparation_attempts.id")
+    )
+    job_id: Mapped[str] = mapped_column(String(120))
+    job_revision_id: Mapped[str] = mapped_column(String(120))
+    projection_fingerprint: Mapped[str] = mapped_column(String(64))
+    content_fingerprint: Mapped[str] = mapped_column(String(64))
+    docx_relative_path: Mapped[str] = mapped_column(String(260))
+    docx_sha256: Mapped[str] = mapped_column(String(64))
+    pdf_relative_path: Mapped[str] = mapped_column(String(260))
+    pdf_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
