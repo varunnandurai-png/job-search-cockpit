@@ -164,3 +164,110 @@ class Phase2FinalArtifact(Phase2Base):
     pdf_relative_path: Mapped[str] = mapped_column(String(260))
     pdf_sha256: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2DiscoveryRun(Phase2Base):
+    __tablename__ = "phase2_discovery_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    phase1_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_profile_generation: Mapped[int] = mapped_column(Integer)
+    phase1_readiness_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_readiness_generation: Mapped[int] = mapped_column(Integer)
+    phase1_authority_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_authority_generation: Mapped[int] = mapped_column(Integer)
+    phase1_restore_generation: Mapped[int] = mapped_column(Integer)
+    phase2_activation_generation: Mapped[int] = mapped_column(Integer)
+    phase2_restore_generation: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2SourceListingObservation(Phase2Base):
+    __tablename__ = "phase2_source_listing_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "source_listing_id",
+            "content_fingerprint",
+            name="uq_phase2_source_listing_observation_fingerprint",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    discovery_run_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_discovery_runs.id")
+    )
+    provider_id: Mapped[str] = mapped_column(String(120))
+    provider_run_id: Mapped[str | None] = mapped_column(String(120))
+    source_listing_id: Mapped[str] = mapped_column(String(240))
+    canonical_url: Mapped[str] = mapped_column(String(2048))
+    title: Mapped[str] = mapped_column(Text)
+    employer_name: Mapped[str] = mapped_column(Text)
+    locations_json: Mapped[list[object]] = mapped_column(JSON)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    public_description: Mapped[str] = mapped_column(Text)
+    compensation_text: Mapped[str | None] = mapped_column(Text)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    raw_content_fingerprint: Mapped[str] = mapped_column(String(64))
+    content_fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2JobRecord(Phase2Base):
+    __tablename__ = "phase2_job_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    posting_identity_fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2JobRevision(Phase2Base):
+    __tablename__ = "phase2_job_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_record_id",
+            "content_fingerprint",
+            name="uq_phase2_job_revision_fingerprint",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_record_id: Mapped[str] = mapped_column(ForeignKey("phase2_job_records.id"))
+    source_observation_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_source_listing_observations.id")
+    )
+    canonical_url: Mapped[str] = mapped_column(String(2048))
+    title: Mapped[str] = mapped_column(Text)
+    employer_name: Mapped[str] = mapped_column(Text)
+    locations_json: Mapped[list[object]] = mapped_column(JSON)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    public_description: Mapped[str] = mapped_column(Text)
+    compensation_text: Mapped[str | None] = mapped_column(Text)
+    content_fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2JobVerification(Phase2Base):
+    __tablename__ = "phase2_job_verifications"
+    __table_args__ = (
+        UniqueConstraint("authorization_id"),
+        UniqueConstraint("authorization_nonce"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    authorization_id: Mapped[str] = mapped_column(String(120))
+    authorization_nonce: Mapped[str] = mapped_column(String(120))
+    job_revision_id: Mapped[str] = mapped_column(ForeignKey("phase2_job_revisions.id"))
+    selected_location_path_fingerprint: Mapped[str] = mapped_column(String(64))
+    source_observation_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_profile_generation: Mapped[int] = mapped_column(Integer)
+    phase1_readiness_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_readiness_generation: Mapped[int] = mapped_column(Integer)
+    phase1_authority_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_authority_generation: Mapped[int] = mapped_column(Integer)
+    phase1_restore_generation: Mapped[int] = mapped_column(Integer)
+    phase2_activation_generation: Mapped[int] = mapped_column(Integer)
+    phase2_restore_generation: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
