@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from ipaddress import ip_address
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -11,6 +12,8 @@ from job_search_cockpit.phase2.provider_config import ProviderCredentials
 
 APIFY_LINKEDIN_ACTOR = "curious_coder/linkedin-jobs-scraper"
 APIFY_NAUKRI_ACTOR = "crawlerbros/naukri-scraper"
+JSEARCH_HOST = "jsearch.p.rapidapi.com"
+JSEARCH_SEARCH_ENDPOINT = "/search-v2"
 
 _APIFY_ACTORS = frozenset({APIFY_LINKEDIN_ACTOR, APIFY_NAUKRI_ACTOR})
 _APIFY_BASE_URL = "https://api.apify.com/v2/acts"
@@ -32,7 +35,7 @@ class ProviderResponseError(RuntimeError):
 class _PreparedProviderRequest:
     url: str
     params: dict[str, str]
-    json: dict[str, object]
+    json: dict[str, object] | None
 
 
 def create_provider_http_client() -> httpx.Client:
@@ -140,6 +143,65 @@ class ApifyProvider:
         )
 
 
+class JSearchProvider:
+    def prepare(self, request: ProviderRequest) -> _PreparedProviderRequest:
+        if request.provider_id != "jsearch":
+            raise ValueError("provider request does not match JSearch")
+        return _PreparedProviderRequest(
+            url=f"https://{JSEARCH_HOST}{JSEARCH_SEARCH_ENDPOINT}",
+            params={"query": f"{request.role_query_id} in {request.location_id}"},
+            json=None,
+        )
+
+    def fetch(
+        self,
+        request: ProviderRequest,
+        credentials: ProviderCredentials,
+        client: httpx.Client,
+    ) -> tuple[ProviderListing, ...]:
+        prepared = self.prepare(request)
+        _require_bounded_client(client)
+        try:
+            response = client.get(
+                prepared.url,
+                params=prepared.params,
+                headers={
+                    "X-RapidAPI-Key": credentials.jsearch_key,
+                    "X-RapidAPI-Host": JSEARCH_HOST,
+                },
+            )
+            response.raise_for_status()
+            payload: Any = response.json()
+        except (httpx.HTTPError, ValueError):
+            raise ProviderResponseError("JSearch provider request failed.") from None
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+            raise ProviderResponseError("JSearch provider returned an invalid response.")
+        jobs = payload["data"].get("jobs")
+        if not isinstance(jobs, list):
+            raise ProviderResponseError("JSearch provider returned an invalid response.")
+        if len(jobs) > request.listing_limit:
+            raise ProviderResponseError("JSearch provider exceeded the requested listing limit.")
+
+        retrieved_at = datetime.now(UTC)
+        return tuple(self._parse_listing(item, retrieved_at) for item in jobs)
+
+    def _parse_listing(self, item: object, retrieved_at: datetime) -> ProviderListing:
+        if not isinstance(item, dict):
+            raise ProviderResponseError("JSearch provider returned an invalid listing.")
+        return ProviderListing(
+            provider_listing_id=_required_text(item, "job_id"),
+            canonical_url=_canonical_public_url(_required_text(item, "job_apply_link")),
+            title=_optional_text(item, "job_title"),
+            employer_name=_optional_text(item, "employer_name"),
+            locations=_locations(item.get("job_location")),
+            posted_at=_optional_datetime(item.get("job_posted_at_datetime_utc")),
+            public_description=_optional_text(item, "job_description"),
+            compensation_text=None,
+            retrieved_at=retrieved_at,
+        )
+
+
 def _decimal_parameter(value: Decimal) -> str:
     return format(value, "f")
 
@@ -218,10 +280,44 @@ def _canonical_listing_url(value: str, approved_host: str) -> str:
     return urlunsplit(("https", approved_host, parsed.path, "", ""))
 
 
+def _canonical_public_url(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        raise ProviderResponseError(
+            "Provider listing lacks a stable identifier or public URL."
+        ) from None
+    hostname = parsed.hostname
+    if (
+        parsed.scheme != "https"
+        or hostname is None
+        or not _is_public_hostname(hostname)
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+        or not parsed.path
+    ):
+        raise ProviderResponseError("Provider listing lacks a stable identifier or public URL.")
+    return urlunsplit(("https", hostname, parsed.path, parsed.query, ""))
+
+
+def _is_public_hostname(hostname: str) -> bool:
+    try:
+        return ip_address(hostname).is_global
+    except ValueError:
+        return "." in hostname and not hostname.endswith(
+            (".example", ".internal", ".invalid", ".local", ".localhost", ".test")
+        )
+
+
 __all__ = [
     "APIFY_LINKEDIN_ACTOR",
     "APIFY_NAUKRI_ACTOR",
+    "JSEARCH_HOST",
+    "JSEARCH_SEARCH_ENDPOINT",
     "ApifyProvider",
+    "JSearchProvider",
     "ProviderResponseError",
     "create_provider_http_client",
 ]

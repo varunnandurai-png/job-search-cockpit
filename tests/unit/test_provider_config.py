@@ -14,6 +14,7 @@ from job_search_cockpit.phase2.providers import (
     APIFY_LINKEDIN_ACTOR,
     APIFY_NAUKRI_ACTOR,
     ApifyProvider,
+    JSearchProvider,
     create_provider_http_client,
 )
 
@@ -148,3 +149,18 @@ def test_apify_naukri_request_is_bounded_to_the_approved_https_actor_endpoint() 
         "location": "bengaluru",
         "maxItems": 5,
     }
+
+
+def test_jsearch_request_is_bounded_to_the_approved_https_search_endpoint() -> None:
+    prepared = JSearchProvider().prepare(
+        ProviderRequest(
+            provider_id="jsearch",
+            role_query_id="senior-product-manager",
+            location_id="bengaluru",
+            listing_limit=5,
+        )
+    )
+
+    assert prepared.url == "https://jsearch.p.rapidapi.com/search-v2"
+    assert prepared.params == {"query": "senior-product-manager in bengaluru"}
+    assert prepared.json is None
