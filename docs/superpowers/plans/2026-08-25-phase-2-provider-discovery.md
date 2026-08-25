@@ -112,7 +112,7 @@ Expected: both commands exit 0.
 
 **Produces:** `Phase2DiscoveryRun`, `Phase2SourceListingObservation`, `Phase2JobRecord`, `Phase2JobRevision`, and `Phase2JobVerification` tables.
 
-- [ ] **Step 1: Write the failing schema test**
+- [x] **Step 1: Write the failing schema test**
 
 ```python
 def test_provider_discovery_schema_is_append_only_and_has_no_secret_columns(
@@ -136,23 +136,23 @@ def test_provider_discovery_schema_is_append_only_and_has_no_secret_columns(
     } <= tables
 ```
 
-- [ ] **Step 2: Run the schema test to verify it fails**
+- [x] **Step 2: Run the schema test to verify it fails**
 
 Run: `uv run pytest tests/integration/test_phase2_discovery_database.py::test_provider_discovery_schema_is_append_only_and_has_no_secret_columns -q`
 
 Expected: FAIL because the tables do not exist.
 
-- [ ] **Step 3: Add the minimum immutable schema**
+- [x] **Step 3: Add the minimum immutable schema**
 
 Create each record with a UUID primary key and `created_at`. Store only public listing content and hashes. Bind a discovery run to the current Phase I profile/readiness/authority fingerprints and Phase II activation/restore generations. Give each source observation a unique `(provider_id, source_listing_id, content_fingerprint)` tuple. Give each job revision a unique `(job_record_id, content_fingerprint)` tuple. Make a verification bind one job revision, one selected location path, the relevant source-observation fingerprint, the Phase I snapshot fingerprints, and its expiry. Add SQLite update/delete rejection triggers for every new table.
 
-- [ ] **Step 4: Run the focused schema tests to verify they pass**
+- [x] **Step 4: Run the focused schema tests to verify they pass**
 
 Run: `uv run pytest tests/integration/test_phase2_discovery_database.py -q`
 
 Expected: PASS; `PRAGMA table_info` must show no `token`, `key`, `cookie`, `session`, `password`, `otp`, `submission`, or answer-wording columns.
 
-- [ ] **Step 5: Verify migration quality**
+- [x] **Step 5: Verify migration quality**
 
 Run: `uv run ruff check src/job_search_cockpit/phase2/models.py alembic_phase2/versions/0006_provider_discovery.py tests/integration/test_phase2_discovery_database.py && uv run mypy src && git diff --check`
 
@@ -169,7 +169,7 @@ Expected: all commands exit 0.
 
 **Produces:** `ApifyProvider.fetch()` and `JSearchProvider.fetch()` returning `tuple[ProviderListing, ...]`.
 
-- [ ] **Step 1: Write the failing invalid-request test**
+- [x] **Step 1: Write the failing invalid-request test**
 
 ```python
 def test_provider_request_rejects_a_listing_limit_above_the_pilot_cap() -> None:
@@ -183,13 +183,13 @@ def test_provider_request_rejects_a_listing_limit_above_the_pilot_cap() -> None:
         )
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/unit/test_provider_config.py::test_provider_request_rejects_a_listing_limit_above_the_pilot_cap -q`
 
 Expected: FAIL because `ProviderRequest` does not yet validate limits.
 
-- [ ] **Step 3: Implement adapters with exact transport constraints**
+- [x] **Step 3: Implement adapters with exact transport constraints**
 
 Promote `httpx` from the development group to runtime dependencies. Use a single `httpx.Client` per manual run with `follow_redirects=False`, a 10-second connect timeout, a 30-second read timeout, and no retry wrapper.
 
@@ -204,13 +204,13 @@ Pass the provider token only in an `Authorization: Bearer` header. For an Actor 
 
 `JSearchProvider.fetch()` must use only the user-supplied RapidAPI JSearch host and documented search endpoint, with `X-RapidAPI-Key` and `X-RapidAPI-Host` headers. Before merging this task, manually verify the exact endpoint and response schema in the connected RapidAPI console; record only the host and endpoint constant, never the key or an example response.
 
-- [ ] **Step 4: Run static configuration tests**
+- [x] **Step 4: Run static configuration tests**
 
 Run: `uv run pytest tests/unit/test_provider_config.py -q`
 
 Expected: PASS; no test constructs a listing or invokes a provider.
 
-- [ ] **Step 5: Verify dependency and source checks**
+- [x] **Step 5: Verify dependency and source checks**
 
 Run: `uv lock --check && uv run ruff check src/job_search_cockpit/phase2/providers.py src/job_search_cockpit/phase2/discovery_types.py && uv run mypy src`
 
@@ -228,7 +228,7 @@ Expected: all commands exit 0.
 
 **Produces:** `DiscoveryService.run_micro_pilot()` and `DiscoveryService.run_weekly_pilot()`.
 
-- [ ] **Step 1: Write the failing fail-closed activation test**
+- [x] **Step 1: Write the failing fail-closed activation test**
 
 ```python
 def test_discovery_is_denied_when_phase_two_activation_is_unavailable(
@@ -240,13 +240,13 @@ def test_discovery_is_denied_when_phase_two_activation_is_unavailable(
         service.run_micro_pilot()
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/integration/test_phase2_live_discovery.py::test_discovery_is_denied_when_phase_two_activation_is_unavailable -q`
 
 Expected: FAIL because `DiscoveryService` does not exist.
 
-- [ ] **Step 3: Implement the manual orchestration boundary**
+- [x] **Step 3: Implement the manual orchestration boundary**
 
 `run_micro_pilot()` must revalidate the active Phase II grant and Phase I activation snapshot before every provider request. It must request at most five LinkedIn listings, five Naukri listings, and one JSearch response. `run_weekly_pilot()` must enforce the approved 40/25/one-request and US$0.50 caps.
 
@@ -254,7 +254,7 @@ Persist each returned real public listing in one coordinator transaction: create
 
 Keep the existing runtime preparation port as `VerifiedJobReadinessUnavailable`; do not replace it in this task.
 
-- [ ] **Step 4: Run the static fail-closed test**
+- [x] **Step 4: Run the static fail-closed test**
 
 Run: `uv run pytest tests/integration/test_phase2_live_discovery.py::test_discovery_is_denied_when_phase_two_activation_is_unavailable -q`
 

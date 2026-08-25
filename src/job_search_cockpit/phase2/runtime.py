@@ -10,6 +10,7 @@ from job_search_cockpit.phase2.application_drafts import (
 )
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
+from job_search_cockpit.phase2.discovery import DiscoveryService
 from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2MutationCoordinator
 from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationAttemptStore,
@@ -24,6 +25,7 @@ class Phase2Runtime:
     coordinator: Phase2MutationCoordinator
     instance_lock: Phase2InstanceLock
     activation_service: Phase2ActivationService
+    discovery_service: DiscoveryService
     resume_preparation_service: ResumePreparationService
     reusable_answer_service: ReusableAnswerService
     application_draft_service: ApplicationDraftService
@@ -40,10 +42,18 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
     instance_lock = Phase2InstanceLock.acquire(phase2_settings)
     coordinator = Phase2MutationCoordinator(phase2_settings, engine, instance_lock)
     preparation_port = VerifiedJobReadinessUnavailable()
+    activation_service = Phase2ActivationService(phase1_port, coordinator)
     return Phase2Runtime(
         coordinator=coordinator,
         instance_lock=instance_lock,
-        activation_service=Phase2ActivationService(phase1_port, coordinator),
+        activation_service=activation_service,
+        discovery_service=DiscoveryService(
+            phase2_settings,
+            phase1_port,
+            activation_service,
+            coordinator,
+            dotenv_path=settings.source_root / ".env",
+        ),
         resume_preparation_service=ResumePreparationService(
             preparation_port, ResumePreparationAttemptStore(coordinator)
         ),

@@ -111,4 +111,4 @@ def test_all_future_live_actions_remain_denied(phase2_settings: Phase2Settings) 
         service.activate(ActivationCommand(actor="Varun", confirmation="ENABLE PHASE II"))
 
         with pytest.raises(Phase2ActivationUnavailable, match="not implemented"):
-            service.revalidate_before(Phase2Action.DISCOVERY)
+            service.revalidate_before(Phase2Action.SCORING)
