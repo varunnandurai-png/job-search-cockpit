@@ -77,11 +77,11 @@
 - Consumes: explicit user approval for `python-docx`, ReportLab, and pypdf.
 - Produces: importable `docx`, `reportlab`, and `pypdf` runtime packages at locked compatible versions.
 
-- [ ] **Step 1: Record the explicit dependency decision in the task commentary**
+- [x] **Step 1: Record the explicit dependency decision in the task commentary**
 
 Require an unambiguous approval of all three proposed packages before editing dependency files. If any package is declined, stop and revise this plan; do not substitute LibreOffice, WeasyPrint, Pandoc, or a handwritten OOXML/PDF implementation without a new decision.
 
-- [ ] **Step 2: Write the failing runtime-availability test**
+- [x] **Step 2: Write the failing runtime-availability test**
 
 ```python
 from importlib.util import find_spec
@@ -93,13 +93,13 @@ def test_approved_resume_rendering_dependencies_are_runtime_available() -> None:
     assert find_spec("pypdf") is not None
 ```
 
-- [ ] **Step 3: Run the test and confirm the expected failure**
+- [x] **Step 3: Run the test and confirm the expected failure**
 
 Run: `UV_CACHE_DIR=/private/tmp/job-search-cockpit-uv-cache uv run pytest tests/unit/test_resume_documents.py::test_approved_resume_rendering_dependencies_are_runtime_available -q`
 
 Expected: FAIL before the packages are added to the project environment.
 
-- [ ] **Step 4: Add only the approved dependencies**
+- [x] **Step 4: Add only the approved dependencies**
 
 Add these bounds to `[project].dependencies` and regenerate the lock:
 
@@ -111,7 +111,7 @@ Add these bounds to `[project].dependencies` and regenerate the lock:
 
 Run: `UV_CACHE_DIR=/private/tmp/job-search-cockpit-uv-cache uv lock`
 
-- [ ] **Step 5: Verify the dependency increment**
+- [x] **Step 5: Verify the dependency increment**
 
 Run:
 
