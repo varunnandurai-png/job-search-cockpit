@@ -75,7 +75,13 @@ class LocalResumeRenderer:
         bullet.font.size = Pt(10.5)
         bullet.paragraph_format.space_after = Pt(5)
         bullet.paragraph_format.line_spacing = 1.15
+        bullet_properties = bullet._element.get_or_add_pPr()
+        contextual_spacing = bullet_properties.find(qn("w:contextualSpacing"))
+        if contextual_spacing is not None:
+            bullet_properties.remove(contextual_spacing)
 
+        top_spacer = doc.add_paragraph()
+        top_spacer.paragraph_format.space_after = Pt(0)
         header = doc.add_paragraph()
         header.alignment = WD_ALIGN_PARAGRAPH.CENTER
         header.paragraph_format.space_before = Pt(8)
@@ -98,6 +104,8 @@ class LocalResumeRenderer:
         heading_run.font.color.rgb = _NAVY
         for entry in document.entries:
             paragraph = doc.add_paragraph(style="List Bullet")
+            paragraph.paragraph_format.space_after = Pt(5)
+            paragraph.paragraph_format.line_spacing = 1.15
             run = paragraph.add_run(entry.safe_wording)
             run.font.name = "Arial"
             run.font.size = Pt(10.5)
@@ -132,7 +140,7 @@ class LocalResumeRenderer:
             parent=styles["BodyText"],
             fontName="Helvetica",
             fontSize=10.5,
-            leading=14,
+            leading=10.5 * 1.15,
             spaceAfter=5,
         )
         photo_width, photo_height = _scaled_photo_size(headshot_path)

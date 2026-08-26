@@ -59,13 +59,22 @@ def test_renderer_creates_readable_equivalent_docx_and_pdf_from_one_model(tmp_pa
     assert extract_pdf_text(rendered.pdf_path) == document.plain_text
 
     rendered_docx = Document(rendered.docx_path)
-    header_properties = rendered_docx.paragraphs[0]._p.get_or_add_pPr()
+    assert rendered_docx.paragraphs[0].text == ""
+    header_properties = rendered_docx.paragraphs[1]._p.get_or_add_pPr()
     shading = header_properties.find(qn("w:shd"))
     border = header_properties.find(f"{qn('w:pBdr')}/{qn('w:bottom')}")
     assert shading is not None
     assert shading.get(qn("w:fill")) == "0A2D50"
     assert border is not None
     assert border.get(qn("w:color")) == "B08523"
+    bullet_properties = rendered_docx.styles["List Bullet"]._element.get_or_add_pPr()
+    assert bullet_properties.find(qn("w:contextualSpacing")) is None
+    first_entry_spacing = rendered_docx.paragraphs[3]._p.get_or_add_pPr().find(
+        qn("w:spacing")
+    )
+    assert first_entry_spacing is not None
+    assert first_entry_spacing.get(qn("w:after")) == "100"
+    assert first_entry_spacing.get(qn("w:line")) == "276"
 
 
 def test_renderer_preserves_literal_safe_wording_in_both_formats(tmp_path: Path) -> None:
@@ -153,5 +162,5 @@ def test_renderer_keeps_a_multi_page_document_equivalent_across_formats(
 
     assert extract_docx_text(rendered.docx_path) == document.plain_text
     assert extract_pdf_text(rendered.pdf_path) == document.plain_text
-    assert len(Document(rendered.docx_path).paragraphs) == 34
+    assert len(Document(rendered.docx_path).paragraphs) == 35
     assert len(PdfReader(rendered.pdf_path).pages) >= 2
