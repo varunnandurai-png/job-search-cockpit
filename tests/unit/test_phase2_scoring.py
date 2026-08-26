@@ -7,10 +7,12 @@ from job_search_cockpit.phase2.assessment import (
     ComponentContribution,
     ComponentRequirement,
     QualifiedBandInputs,
+    ReadinessInputs,
     anchor_points,
     calculate_component_score,
     component_anchor,
     qualified_match_band,
+    ready_for_future_drafting,
     resolve_confidence,
 )
 from job_search_cockpit.phase2.assessment_types import (
@@ -120,6 +122,19 @@ def test_high_raw_score_with_a_required_gap_is_not_strong() -> None:
     )
 
     assert band is QualifiedMatchBand.WORTHWHILE_WITH_REQUIRED_GAP
+
+
+def test_future_drafting_readiness_rejects_a_strong_score_with_stale_verification() -> None:
+    ready = ready_for_future_drafting(
+        ReadinessInputs(
+            raw_score=90,
+            qualified_band=QualifiedMatchBand.STRONG,
+            confidence=ConfidenceState.HIGH,
+            official_verification_current=False,
+        )
+    )
+
+    assert ready is False
 
 
 def test_evidence_service_blocks_a_projection_with_an_unmet_requirement() -> None:

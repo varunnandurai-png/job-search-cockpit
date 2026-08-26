@@ -88,6 +88,47 @@ def qualified_match_band(inputs: QualifiedBandInputs) -> QualifiedMatchBand:
 
 
 @dataclass(frozen=True, slots=True)
+class ReadinessInputs:
+    raw_score: int
+    qualified_band: QualifiedMatchBand
+    confidence: ConfidenceState
+    official_verification_current: bool
+    selected_location_path_passes: bool = True
+    compensation_verified: bool = True
+    sponsorship_confirmed: bool = True
+    employer_approved: bool = True
+    role_scope_resolved: bool = True
+    unsupported_required: bool = False
+    notice_conflict_resolved: bool = True
+    profile_current: bool = True
+    facts_current: bool = True
+    assessment_current: bool = True
+    critical_floors_pass: bool = True
+    employer_risk_current: bool = True
+
+
+def ready_for_future_drafting(inputs: ReadinessInputs) -> bool:
+    return (
+        inputs.raw_score >= 85
+        and inputs.qualified_band is QualifiedMatchBand.STRONG
+        and inputs.confidence in {ConfidenceState.HIGH, ConfidenceState.MEDIUM}
+        and inputs.official_verification_current
+        and inputs.selected_location_path_passes
+        and inputs.compensation_verified
+        and inputs.sponsorship_confirmed
+        and inputs.employer_approved
+        and inputs.role_scope_resolved
+        and not inputs.unsupported_required
+        and inputs.notice_conflict_resolved
+        and inputs.profile_current
+        and inputs.facts_current
+        and inputs.assessment_current
+        and inputs.critical_floors_pass
+        and inputs.employer_risk_current
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ComponentContribution:
     requirement_id: str
     points: int
