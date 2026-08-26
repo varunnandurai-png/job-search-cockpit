@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from job_search_cockpit.phase2.assessment_types import ConfidenceState
 from job_search_cockpit.phase2.shortlist import ShortlistCandidate, focused_shortlist
 
@@ -35,3 +37,18 @@ def test_focused_shortlist_orders_equal_scores_by_higher_confidence() -> None:
     )
 
     assert tuple(candidate.assessment_id for candidate in shortlist) == ("high", "medium")
+
+
+def test_focused_shortlist_orders_equal_score_and_confidence_by_official_freshness() -> None:
+    shortlist = focused_shortlist(
+        (
+            ShortlistCandidate(
+                "older", 80, official_verified_at=datetime(2026, 8, 1, tzinfo=UTC)
+            ),
+            ShortlistCandidate(
+                "newer", 80, official_verified_at=datetime(2026, 8, 2, tzinfo=UTC)
+            ),
+        )
+    )
+
+    assert tuple(candidate.assessment_id for candidate in shortlist) == ("newer", "older")

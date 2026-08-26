@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from job_search_cockpit.phase2.assessment_types import ConfidenceState
 
@@ -19,6 +20,10 @@ class ShortlistCandidate:
     assessment_current: bool = True
     qualified_band: str = "worthwhile"
     confidence: ConfidenceState = ConfidenceState.HIGH
+    official_verified_at: datetime = field(
+        default_factory=lambda: datetime.min.replace(tzinfo=UTC)
+    )
+    discovered_at: datetime = field(default_factory=lambda: datetime.min.replace(tzinfo=UTC))
 
     def __post_init__(self) -> None:
         if not self.assessment_id.strip():
@@ -27,6 +32,8 @@ class ShortlistCandidate:
             raise ValueError("score must be between zero and 100")
         if self.qualified_band not in {"strong", "worthwhile", "worthwhile_with_required_gap"}:
             raise ValueError("qualified band is not eligible for the focused shortlist")
+        if self.official_verified_at.tzinfo is None or self.discovered_at.tzinfo is None:
+            raise ValueError("shortlist timestamps must be timezone-aware")
 
 
 def focused_shortlist(
@@ -47,6 +54,8 @@ def focused_shortlist(
         key=lambda candidate: (
             -candidate.score,
             _CONFIDENCE_ORDER[candidate.confidence],
+            -candidate.official_verified_at.timestamp(),
+            -candidate.discovered_at.timestamp(),
             candidate.assessment_id,
         ),
     )
