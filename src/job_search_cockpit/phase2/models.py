@@ -3,6 +3,7 @@ from typing import Any, ClassVar
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -271,6 +272,44 @@ class Phase2DiscoveryRun(Phase2Base):
     phase1_restore_generation: Mapped[int] = mapped_column(Integer)
     phase2_activation_generation: Mapped[int] = mapped_column(Integer)
     phase2_restore_generation: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ProviderInstanceApproval(Phase2Base):
+    __tablename__ = "phase2_provider_instance_approvals"
+    __table_args__ = (UniqueConstraint("approval_fingerprint"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    instance_id: Mapped[str] = mapped_column(String(120))
+    provider_kind: Mapped[str] = mapped_column(String(64))
+    employer_identity: Mapped[str] = mapped_column(String(240))
+    hosts_json: Mapped[list[object]] = mapped_column(JSON)
+    endpoint_url: Mapped[str] = mapped_column(String(2048))
+    redirect_hosts_json: Mapped[list[object]] = mapped_column(JSON)
+    path_prefixes_json: Mapped[list[object]] = mapped_column(JSON)
+    parser_version: Mapped[str] = mapped_column(String(120))
+    max_response_bytes: Mapped[int] = mapped_column(Integer)
+    min_request_interval_seconds: Mapped[int] = mapped_column(Integer)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    actor: Mapped[str] = mapped_column(String(120))
+    reason: Mapped[str] = mapped_column(Text)
+    phase2_activation_generation: Mapped[int] = mapped_column(Integer)
+    phase2_restore_generation: Mapped[int] = mapped_column(Integer)
+    approval_fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ProviderInstanceHealthEvent(Phase2Base):
+    __tablename__ = "phase2_provider_instance_health_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider_instance_approval_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_provider_instance_approvals.id")
+    )
+    outcome_code: Mapped[str] = mapped_column(String(64))
+    request_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    request_finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    response_fingerprint: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
