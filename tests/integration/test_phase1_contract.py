@@ -14,6 +14,7 @@ from job_search_cockpit.phase1_contract.service import (
 )
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ManualContentReviewRequest,
+    Phase1MatchingRequirementQuery,
     Phase1ResumeFactProjectionRequest,
 )
 from job_search_cockpit.search_profile.catalog import build_profile_v1
@@ -254,6 +255,28 @@ def test_matching_port_projects_only_current_safe_fact_revisions(
     assert projection.facts[0].revision_id == "sanitized-revision-1"
     assert projection.facts[0].safe_wording == "Python"
     assert not hasattr(projection.facts[0], "value_json")
+
+
+def test_matching_port_returns_opaque_current_fact_set_for_bounded_requirements(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-118-pass",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+
+        fact_set = InternalPhase1MatchingPort(contract).matching_fact_set(
+            Phase1MatchingRequirementQuery(requirement_ids=("skills.python",))
+        )
+
+    assert fact_set.requirement_ids == ("skills.python",)
+    assert fact_set.profile_fingerprint
+    assert fact_set.fingerprint
+    assert not hasattr(fact_set, "safe_wording")
 
 
 def test_matching_port_rejects_a_changed_resume_fact_projection(

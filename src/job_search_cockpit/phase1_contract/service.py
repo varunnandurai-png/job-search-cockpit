@@ -16,6 +16,9 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
     Phase1ManualContentReviewReceipt,
     Phase1ManualContentReviewRequest,
+    Phase1MatchingFactSetSnapshot,
+    Phase1MatchingFactSnapshot,
+    Phase1MatchingRequirementQuery,
     Phase1ReadinessSnapshot,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
@@ -293,6 +296,55 @@ class Phase1ContractService:
         )
         if current != expected:
             raise Phase1ContractUnavailable("The Phase I resume fact projection changed.")
+        return current
+
+    def snapshot_matching_fact_set(
+        self, query: Phase1MatchingRequirementQuery
+    ) -> Phase1MatchingFactSetSnapshot:
+        projection = self.snapshot_resume_fact_projection(
+            Phase1ResumeFactProjectionRequest(requirement_ids=query.requirement_ids)
+        )
+        facts = tuple(
+            Phase1MatchingFactSnapshot(
+                requirement_id=fact.requirement_id,
+                claim_id=fact.claim_id,
+                revision_id=fact.revision_id,
+                support_assertion_id=fact.support_assertion_id,
+            )
+            for fact in projection.facts
+        )
+        payload = {
+            "requirement_ids": query.requirement_ids,
+            "facts": [fact.model_dump(mode="json") for fact in facts],
+            "profile_fingerprint": projection.profile_fingerprint,
+            "profile_generation": projection.profile_generation,
+            "readiness_fingerprint": projection.readiness_fingerprint,
+            "readiness_generation": projection.readiness_generation,
+            "authority_fingerprint": projection.authority_fingerprint,
+            "authority_generation": projection.authority_generation,
+            "restore_generation": projection.restore_generation,
+        }
+        return Phase1MatchingFactSetSnapshot(
+            requirement_ids=query.requirement_ids,
+            facts=facts,
+            profile_fingerprint=projection.profile_fingerprint,
+            profile_generation=projection.profile_generation,
+            readiness_fingerprint=projection.readiness_fingerprint,
+            readiness_generation=projection.readiness_generation,
+            authority_fingerprint=projection.authority_fingerprint,
+            authority_generation=projection.authority_generation,
+            restore_generation=projection.restore_generation,
+            fingerprint=canonical_fingerprint(payload),
+        )
+
+    def revalidate_matching_fact_set(
+        self, expected: Phase1MatchingFactSetSnapshot
+    ) -> Phase1MatchingFactSetSnapshot:
+        current = self.snapshot_matching_fact_set(
+            Phase1MatchingRequirementQuery(requirement_ids=expected.requirement_ids)
+        )
+        if current != expected:
+            raise Phase1ContractUnavailable("The Phase I matching fact set changed.")
         return current
 
     def request_manual_content_review(

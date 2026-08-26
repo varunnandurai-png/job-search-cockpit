@@ -11,6 +11,8 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
     Phase1ManualContentReviewReceipt,
     Phase1ManualContentReviewRequest,
+    Phase1MatchingFactSetSnapshot,
+    Phase1MatchingRequirementQuery,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
 )
@@ -109,6 +111,14 @@ class Phase1MatchingPort(Protocol):
     def revalidate_resume_fact_projection(
         self, expected: Phase1ResumeFactProjection
     ) -> Phase1ResumeFactProjection: ...
+
+    def matching_fact_set(
+        self, query: Phase1MatchingRequirementQuery
+    ) -> Phase1MatchingFactSetSnapshot: ...
+
+    def revalidate_matching_fact_set(
+        self, expected: Phase1MatchingFactSetSnapshot
+    ) -> Phase1MatchingFactSetSnapshot: ...
 
     def request_manual_content_review(
         self, request: Phase1ManualContentReviewRequest

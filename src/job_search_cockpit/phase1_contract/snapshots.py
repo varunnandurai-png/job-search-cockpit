@@ -125,6 +125,45 @@ class Phase1ResumeFactProjection(BaseModel):
     fingerprint: str
 
 
+class Phase1MatchingRequirementQuery(BaseModel):
+    """Bounded opaque requirement IDs for Phase II matching only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    requirement_ids: tuple[str, ...] = Field(min_length=1, max_length=32)
+
+    @field_validator("requirement_ids")
+    @classmethod
+    def validate_requirement_ids(cls, requirement_ids: tuple[str, ...]) -> tuple[str, ...]:
+        return Phase1ResumeFactProjectionRequest.validate_requirement_ids(requirement_ids)
+
+
+class Phase1MatchingFactSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement_id: str
+    claim_id: str
+    revision_id: str
+    support_assertion_id: str
+
+
+class Phase1MatchingFactSetSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    contract_version: Literal["phase1.matching-fact-set.v1"] = "phase1.matching-fact-set.v1"
+    requirement_ids: tuple[str, ...]
+    facts: tuple[Phase1MatchingFactSnapshot, ...]
+    complete: Literal[True] = True
+    profile_fingerprint: str
+    profile_generation: int
+    readiness_fingerprint: str
+    readiness_generation: int
+    authority_fingerprint: str
+    authority_generation: int
+    restore_generation: int
+    fingerprint: str
+
+
 class Phase1ManualContentReviewRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
