@@ -41,11 +41,11 @@ class MatchScoreComponents:
 
     def __post_init__(self) -> None:
         maxima = {
-            "role": 25,
+            "role": 20,
             "domain": 20,
-            "responsibility": 15,
-            "technical": 15,
-            "outcome": 10,
+            "responsibility": 20,
+            "technical": 10,
+            "outcome": 15,
             "seniority": 10,
             "evidence": 5,
         }

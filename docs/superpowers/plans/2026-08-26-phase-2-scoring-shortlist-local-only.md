@@ -74,7 +74,7 @@ Expected: FAIL because the assessment contracts and aggregator rejection do not 
 
 - [ ] **Step 3: Implement minimal frozen contracts**
 
-Define `GateResult`, `EligibilityState`, `RequirementKind`, `EvidenceRelation`, `ConfidenceState`, `AssessmentInvalidation`, `LocationEligibilityPath`, `Requirement`, `RequirementEvidenceMapping`, `MatchScoreComponents`, and `MatchAssessmentResult` as frozen value objects. Reject unrecognized provider IDs before a request can be prepared; remove Apify/JSearch credential loading only in the separately approved direct-source migration, leaving this task limited to deny-by-default selection. Accept only the fixed score maxima `25, 20, 15, 15, 10, 10, 5` and make totals derived.
+Define `GateResult`, `EligibilityState`, `RequirementKind`, `EvidenceRelation`, `ConfidenceState`, `AssessmentInvalidation`, `LocationEligibilityPath`, `Requirement`, `RequirementEvidenceMapping`, `MatchScoreComponents`, and `MatchAssessmentResult` as frozen value objects. Reject unrecognized provider IDs before a request can be prepared; remove Apify/JSearch credential loading only in the separately approved direct-source migration, leaving this task limited to deny-by-default selection. Accept only the fixed score maxima `20, 20, 20, 15, 10, 10, 5` and make totals derived.
 
 - [ ] **Step 4: Run focused verification**
 
@@ -372,4 +372,3 @@ Expected: PASS once the separately approved corpus exists. Then use `git status 
 - Every task has a failing-test step, focused verification, and a separate commit point.
 - Phase I data stays behind `Phase1MatchingPort`; Phase III authorization and finalisation boundaries are untouched.
 - Real listings are required for calibration and acceptance; no synthetic job listings or saved live response fixtures are introduced.
-
