@@ -94,6 +94,26 @@ def test_single_direct_requirement_is_capped_at_strong() -> None:
     assert anchor is ComponentAnchor.STRONG
 
 
+def test_component_anchor_uses_exact_rational_threshold_at_thirty_five_percent() -> None:
+    requirements = tuple(
+        ComponentRequirement(f"required-{index}", RequirementKind.REQUIRED, EvidenceRelation.NONE)
+        if index >= 2
+        else ComponentRequirement(
+            f"required-{index}", RequirementKind.REQUIRED, EvidenceRelation.DIRECT
+        )
+        for index in range(4)
+    ) + tuple(
+        ComponentRequirement(
+            f"preferred-{index}",
+            RequirementKind.PREFERRED,
+            EvidenceRelation.DIRECT if index == 0 else EvidenceRelation.NONE,
+        )
+        for index in range(8)
+    )
+
+    assert component_anchor(requirements) is ComponentAnchor.PARTIAL
+
+
 def test_anchor_points_use_only_the_approved_discrete_values() -> None:
     assert anchor_points(20, ComponentAnchor.STRONG) == 15
     assert anchor_points(15, ComponentAnchor.PARTIAL) == 8

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from fractions import Fraction
 
 from job_search_cockpit.phase1_contract.snapshots import Phase1ResumeFactProjectionRequest
 from job_search_cockpit.phase2.assessment_types import (
@@ -157,23 +158,24 @@ def component_anchor(requirements: tuple[ComponentRequirement, ...]) -> Componen
         RequirementKind.PREFERRED: 1,
     }
     total = sum(weights[requirement.kind] for requirement in requirements)
-    contribution = sum(
+    direct_contribution = sum(
         weights[requirement.kind]
         for requirement in requirements
         if requirement.relation is EvidenceRelation.DIRECT
-    ) + sum(
+    )
+    adjacent_contribution = sum(
         weights[requirement.kind]
         for requirement in requirements
         if requirement.relation is EvidenceRelation.ADJACENT
-    ) / 2
-    coverage = contribution / total
+    )
+    coverage = Fraction(direct_contribution * 2 + adjacent_contribution, total * 2)
     if coverage == 0:
         return ComponentAnchor.NONE
-    if coverage < 0.35:
+    if coverage < Fraction(35, 100):
         return ComponentAnchor.ADJACENT
-    if coverage < 0.65:
+    if coverage < Fraction(65, 100):
         return ComponentAnchor.PARTIAL
-    if coverage < 0.85:
+    if coverage < Fraction(85, 100):
         return ComponentAnchor.STRONG
     direct_count = sum(
         requirement.relation is EvidenceRelation.DIRECT for requirement in requirements
