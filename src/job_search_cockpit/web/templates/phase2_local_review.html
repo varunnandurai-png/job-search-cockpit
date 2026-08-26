@@ -3,6 +3,61 @@
 {% block content %}
   <p>Private local review</p>
   <h1>Résumé finalisation review</h1>
+  {% if error %}
+    <p role="alert">{{ error }}</p>
+  {% elif resume_review %}
+    <p>Verified job {{ resume_review.job_id }} · revision {{ resume_review.job_revision_id }}</p>
+
+    <section aria-labelledby="requirements-status">
+      <h2 id="requirements-status">Approved requirement evidence</h2>
+      <ul>
+        {% for requirement in resume_review.requirements.supported %}
+          <li>
+            <strong>{{ requirement.requirement_id }}</strong>: {{ requirement.safe_wording }}
+            <span>Claim {{ requirement.claim_id }} · revision {{ requirement.revision_id }} · support {{ requirement.support_assertion_id }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+      {% if resume_review.requirements.unsupported %}
+        <h3>Blocking gaps</h3>
+        <ul>
+          {% for requirement in resume_review.requirements.unsupported %}
+            <li>{{ requirement.requirement_id }}: {{ requirement.reason }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>No blocking evidence gaps.</p>
+      {% endif %}
+    </section>
+
+    <section aria-labelledby="canonical-resume">
+      <h2 id="canonical-resume">Canonical résumé content</h2>
+      <pre>{{ resume_review.plain_text }}</pre>
+      <p>Content fingerprint: {{ resume_review.content_fingerprint }}</p>
+    </section>
+
+    <section aria-labelledby="finalisation-status">
+      <h2 id="finalisation-status">Final local artifacts</h2>
+      {% if resume_artifact %}
+        <p>DOCX path: {{ resume_artifact.docx_path }}</p>
+        <p>DOCX SHA-256: {{ resume_artifact.docx_sha256 }} · {{ resume_artifact.docx_byte_length }} bytes</p>
+        <p>PDF path: {{ resume_artifact.pdf_path }}</p>
+        <p>PDF SHA-256: {{ resume_artifact.pdf_sha256 }} · {{ resume_artifact.pdf_byte_length }} bytes</p>
+      {% else %}
+        <p>No final files exist. Finalisation requires the exact confirmation and a local professional headshot.</p>
+        <form method="post" action="/phase-2/resume-reviews/{{ resume_review.attempt_id }}/finalise">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label for="confirmation">Exact confirmation</label>
+          <input id="confirmation" name="confirmation" required autocomplete="off" value="{{ resume_review.exact_confirmation }}">
+          <label for="headshot-path">Local headshot path</label>
+          <input id="headshot-path" name="headshot_path" required autocomplete="off">
+          <button type="submit">Finalise résumé for this verified job</button>
+        </form>
+      {% endif %}
+    </section>
+
+    <p>No provider, browser automation, application submission, sharing, or Drive action is available.</p>
+  {% else %}
   <p>Verified job readiness is unavailable. No job has been authorised for preparation.</p>
 
   <section aria-labelledby="discovery-status">
@@ -46,4 +101,5 @@
     <h2 id="drive-status">Storage integration</h2>
     <p>Drive: not implemented. Sign-in, consent, upload, sharing, and retries are unavailable.</p>
   </section>
+  {% endif %}
 {% endblock %}

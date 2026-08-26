@@ -69,8 +69,11 @@ FINALISE_CONFIRMATION = "FINALISE RESUME FOR THIS VERIFIED JOB"
 class ResumeDocumentReview:
     attempt_id: str
     job_id: str
+    job_revision_id: str
     plain_text: str
     content_fingerprint: str
+    requirements: RequirementLedger
+    exact_confirmation: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,16 +113,38 @@ class LocalResumeFinalisationService:
 
     def start_review(self, job_id: str) -> ResumeDocumentReview:
         authorization = self._preparation_port.authorization_for_resume(job_id)
+        if authorization.job_id != job_id:
+            raise FinalisationError("The verified job authorization changed.")
+        self._validate_authorization(authorization)
         requirement_ids = assert_phase3_requirement_ledger(authorization)
-        authorization = self._preparation_port.revalidate_resume_authorization(authorization)
+        revalidated = self._preparation_port.revalidate_resume_authorization(authorization)
+        if revalidated != authorization:
+            raise FinalisationError("The verified job authorization changed.")
         projection = self._phase1_port.resume_fact_projection(
             Phase1ResumeFactProjectionRequest(requirement_ids=requirement_ids)
         )
         if self._phase1_port.revalidate_resume_fact_projection(projection) != projection:
             raise FinalisationError("Approved résumé facts changed before review.")
+        self._validate_projection_binding(authorization, projection)
         document = build_canonical_resume_document(projection)
         attempt_id = self._record_attempt(authorization, projection.fingerprint, document.content_fingerprint)
-        return ResumeDocumentReview(attempt_id, job_id, document.plain_text, document.content_fingerprint)
+        return self.review_for(attempt_id)
+
+    def review_for(self, attempt_id: str) -> ResumeDocumentReview:
+        attempt = self._attempt(attempt_id)
+        authorization = self._authorization_for_attempt(attempt)
+        projection = self._projection_for_attempt(attempt, authorization)
+        document = build_canonical_resume_document(projection)
+        requirements = build_requirement_ledger(projection)
+        return ResumeDocumentReview(
+            attempt_id=attempt.id,
+            job_id=attempt.job_id,
+            job_revision_id=attempt.job_revision_id,
+            plain_text=document.plain_text,
+            content_fingerprint=document.content_fingerprint,
+            requirements=requirements,
+            exact_confirmation=FINALISE_CONFIRMATION,
+        )
 
     def finalise(self, command: FinaliseResumeCommand) -> FinalResumeArtifact:
         if command.confirmation != FINALISE_CONFIRMATION:
@@ -254,11 +279,11 @@ class LocalResumeFinalisationService:
             raise FinalisationError("The verified job authorization changed.")
         return authorization
 
-    def _document_for_attempt(
+    def _projection_for_attempt(
         self,
         attempt: Phase2ResumeDocumentAttempt,
         authorization: VerifiedJobPreparationAuthorization,
-    ) -> CanonicalResumeDocument:
+    ) -> Phase1ResumeFactProjection:
         requirement_ids = assert_phase3_requirement_ledger(authorization)
         projection = self._phase1_port.resume_fact_projection(
             Phase1ResumeFactProjectionRequest(requirement_ids=requirement_ids)
@@ -276,10 +301,45 @@ class LocalResumeFinalisationService:
             or projection.restore_generation != attempt.phase1_restore_generation
         ):
             raise FinalisationError("Approved résumé facts changed.")
+        self._validate_projection_binding(authorization, projection)
+        return projection
+
+    def _document_for_attempt(
+        self,
+        attempt: Phase2ResumeDocumentAttempt,
+        authorization: VerifiedJobPreparationAuthorization,
+    ) -> CanonicalResumeDocument:
+        projection = self._projection_for_attempt(attempt, authorization)
         document = build_canonical_resume_document(projection)
         if document.content_fingerprint != attempt.canonical_model_fingerprint:
             raise FinalisationError("The reviewed résumé content changed.")
         return document
+
+    @staticmethod
+    def _validate_authorization(
+        authorization: VerifiedJobPreparationAuthorization,
+    ) -> None:
+        if _as_utc(authorization.expires_at) <= datetime.now(UTC):
+            raise FinalisationError("The verified job authorization has expired.")
+        if authorization.eligibility != "eligible" or authorization.unknown_mandatory_rule_codes:
+            raise FinalisationError("The verified job is not eligible for finalisation.")
+
+    @staticmethod
+    def _validate_projection_binding(
+        authorization: VerifiedJobPreparationAuthorization,
+        projection: Phase1ResumeFactProjection,
+    ) -> None:
+        if (
+            projection.requirement_ids != authorization.requirement_ids
+            or projection.profile_fingerprint != authorization.phase1_profile_fingerprint
+            or projection.profile_generation != authorization.phase1_profile_generation
+            or projection.readiness_fingerprint != authorization.phase1_readiness_fingerprint
+            or projection.readiness_generation != authorization.phase1_readiness_generation
+            or projection.authority_fingerprint != authorization.phase1_authority_fingerprint
+            or projection.authority_generation != authorization.phase1_authority_generation
+            or projection.restore_generation != authorization.phase1_restore_generation
+        ):
+            raise FinalisationError("Approved résumé facts changed.")
 
     def _artifact_path(self, relative_path: str) -> Path:
         base = self._output_dir.resolve()

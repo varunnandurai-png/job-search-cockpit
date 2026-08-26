@@ -1,10 +1,18 @@
 from contextlib import suppress
+from pathlib import Path
 from typing import Literal, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
 from job_search_cockpit.phase2.activation import Phase2ActivationService
+from job_search_cockpit.phase2.finalisation import (
+    FINALISE_CONFIRMATION,
+    FinalisationError,
+    FinaliseResumeCommand,
+    FinalResumeArtifact,
+    ResumeDocumentReview,
+)
 from job_search_cockpit.phase2.resume_safety import ResumePreparationError
 from job_search_cockpit.phase2.runtime import Phase2Runtime
 from job_search_cockpit.phase2.types import ActivationCommand, Phase2ActivationUnavailable
@@ -49,6 +57,105 @@ def local_review_page(request: Request) -> Response:
         {"csrf_token": request.app.state.launch_session.csrf_token, "discovery_status": status},
     )
     return response
+
+
+@router.post("/phase-2/resume-reviews")
+async def start_resume_review(request: Request) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    job_id = _bounded(form.get("job_id"), 120)
+    if runtime is None or not job_id:
+        return _resume_error(request)
+    try:
+        review = runtime.resume_finalisation_service.start_review(job_id)
+    except (FinalisationError, ResumePreparationError, ValueError):
+        return _resume_error(request)
+    return RedirectResponse(
+        f"/phase-2/resume-reviews/{review.attempt_id}", status_code=303
+    )
+
+
+@router.get("/phase-2/resume-reviews/{attempt_id}", response_class=HTMLResponse)
+def resume_review(request: Request, attempt_id: str) -> Response:
+    runtime = _runtime(request)
+    attempt_id = _bounded(attempt_id, 120)
+    if runtime is None or not attempt_id:
+        return _resume_error(request)
+    try:
+        review = runtime.resume_finalisation_service.review_for(attempt_id)
+    except (FinalisationError, ResumePreparationError, ValueError):
+        return _resume_error(request)
+    artifact: FinalResumeArtifact | None = None
+    with suppress(FinalisationError, ResumePreparationError, ValueError):
+        artifact = runtime.resume_finalisation_service.artifacts_for(attempt_id)
+    return _resume_page(request, review, artifact)
+
+
+@router.post("/phase-2/resume-reviews/{attempt_id}/finalise")
+async def finalise_resume(request: Request, attempt_id: str) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    attempt_id = _bounded(attempt_id, 120)
+    confirmation = str(form.get("confirmation", ""))
+    headshot_value = _bounded(form.get("headshot_path"), 4096)
+    headshot_path = Path(headshot_value)
+    if (
+        runtime is None
+        or not attempt_id
+        or confirmation != FINALISE_CONFIRMATION
+        or not headshot_value
+        or not headshot_path.is_absolute()
+    ):
+        return _resume_error(request)
+    try:
+        runtime.resume_finalisation_service.finalise(
+            FinaliseResumeCommand(attempt_id, confirmation, headshot_path)
+        )
+    except (FinalisationError, ResumePreparationError, ValueError):
+        return _resume_error(request)
+    return RedirectResponse(f"/phase-2/resume-reviews/{attempt_id}", status_code=303)
+
+
+def _resume_page(
+    request: Request,
+    review: ResumeDocumentReview | None,
+    artifact: FinalResumeArtifact | None,
+    *,
+    error: str = "",
+    status_code: int = 200,
+) -> Response:
+    response: Response = request.app.state.templates.TemplateResponse(
+        request,
+        "phase2_local_review.html",
+        {
+            "csrf_token": request.app.state.launch_session.csrf_token,
+            "resume_review": review,
+            "resume_artifact": artifact,
+            "error": error,
+            "discovery_status": None,
+        },
+        status_code=status_code,
+    )
+    return response
+
+
+def _resume_error(request: Request) -> Response:
+    return _resume_page(
+        request,
+        None,
+        None,
+        error="Resume finalisation is unavailable for this request.",
+        status_code=400,
+    )
+
+
+def _bounded(value: object, maximum: int) -> str:
+    candidate = str(value or "").strip()
+    return candidate if len(candidate) <= maximum else ""
 
 
 @router.post("/phase-2/activate")

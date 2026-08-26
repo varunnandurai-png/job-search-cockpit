@@ -40,6 +40,23 @@ def test_artifact_access_revalidates_and_returns_the_published_pair(tmp_path: Pa
         runtime.close()
 
 
+def test_review_lookup_revalidates_the_bound_authorization_and_projection(
+    tmp_path: Path,
+) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        started = runtime.service.start_review("job-1")
+
+        reviewed = runtime.service.review_for(started.attempt_id)
+
+        assert reviewed == started
+        assert reviewed.job_revision_id == "job-revision-1"
+        assert reviewed.requirements.drafting_allowed is True
+        assert reviewed.exact_confirmation == FINALISE_CONFIRMATION
+    finally:
+        runtime.close()
+
+
 def test_later_role_at_same_company_uses_role_prefix_without_overwrite(tmp_path: Path) -> None:
     runtime = build_synthetic_phase3_runtime(tmp_path)
     try:
