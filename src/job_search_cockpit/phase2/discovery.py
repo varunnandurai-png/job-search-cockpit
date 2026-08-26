@@ -249,7 +249,7 @@ class DiscoveryService:
             _ProviderPlan(
                 "jsearch",
                 ProviderRequest(
-                    "jsearch", role, location, listing_limit or limits.jsearch_listing_limit
+                    "jsearch", role, location, limits.jsearch_listing_limit
                 ),
                 JSearchProvider(),
             ),

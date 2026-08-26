@@ -15,7 +15,8 @@ The first manual pilot uses these read-only sources:
   listings.
 - Apify Naukri Actor: `automation-lab/naukri-scraper`, at most 25 listings.
 - Apify Glassdoor Actor: `valig/glassdoor-jobs-scraper`, at most 25 listings.
-- JSearch through the configured RapidAPI subscription: one request.
+- JSearch through the configured RapidAPI subscription: one request, bounded to
+  25 returned listings.
 
 Each Apify run uses a US$0.50 maximum charge when the selected Actor supports a
 per-run charge limit. The application also enforces the listing caps. No
@@ -66,7 +67,8 @@ candidate assessment or authorization rather than being rewritten in place.
   created. Static tests may cover only configuration and fail-closed behavior
   without listing payloads. Provider verification uses a user-started,
   real-data micro-run: at most five listings from each selected Apify Actor,
-  a US$0.10 per-Actor limit when supported, and one JSearch request. Returned
+  a US$0.10 per-Actor limit when supported, and one JSearch request bounded to
+  25 listings. Returned
   public listings are production catalog records, never test fixtures.
 - Provider adapters use a 10-second connect timeout and a 90-second read timeout
   to accommodate the selected Naukri Actor, with fixed request/listing limits and

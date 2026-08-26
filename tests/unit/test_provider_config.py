@@ -5,6 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1AcceptanceReceiptSnapshot,
+    Phase1ActivationInputs,
+    Phase1ReadinessSnapshot,
+    SearchProfileSnapshot,
+)
+from job_search_cockpit.phase2.config import Phase2Settings
+from job_search_cockpit.phase2.discovery import DiscoveryService
 from job_search_cockpit.phase2.discovery_types import ProviderRequest
 from job_search_cockpit.phase2.provider_config import (
     ProviderConfigurationError,
@@ -19,6 +27,7 @@ from job_search_cockpit.phase2.providers import (
     JSearchProvider,
     create_provider_http_client,
 )
+from job_search_cockpit.search_profile.catalog import build_profile_v1
 
 
 def test_provider_credentials_fail_closed_when_a_required_value_is_absent(
@@ -206,3 +215,44 @@ def test_jsearch_request_is_bounded_to_the_approved_https_search_endpoint() -> N
     assert prepared.url == "https://jsearch.p.rapidapi.com/search-v2"
     assert prepared.params == {"query": "senior-product-manager in bengaluru"}
     assert prepared.json is None
+
+
+def test_micro_discovery_keeps_jsearch_within_its_separate_pilot_cap(tmp_path: Path) -> None:
+    profile = build_profile_v1()
+    inputs = Phase1ActivationInputs(
+        acceptance_receipt=Phase1AcceptanceReceiptSnapshot(
+            id="acceptance-id",
+            application_build="test-build",
+            schema_revision="0002_phase1_contract",
+            acceptance_suite_version="test-suite",
+            acceptance_run_id="test-run",
+            result_fingerprint="a" * 64,
+            restore_high_water_mark=0,
+            accepted_at="2026-08-26T00:00:00+00:00",
+            fingerprint="b" * 64,
+        ),
+        readiness=Phase1ReadinessSnapshot(
+            ready_for_phase_2=True,
+            manifest_version="test-manifest",
+            import_run_id="test-import",
+            source_hashes={},
+            active_profile_version=1,
+            readiness_generation=1,
+            authority_high_water_mark=1,
+            restore_generation=0,
+            fingerprint="c" * 64,
+        ),
+        profile=SearchProfileSnapshot(
+            version_number=1,
+            payload=profile,
+            active_profile_generation=1,
+            fingerprint="d" * 64,
+        ),
+    )
+
+    plans = DiscoveryService(Phase2Settings(data_dir=tmp_path))._plans(
+        inputs, listing_limit=5, charge_limit=Decimal("0.10")
+    )
+
+    jsearch_plan = next(plan for plan in plans if plan.provider_id == "jsearch")
+    assert jsearch_plan.request.listing_limit == 25

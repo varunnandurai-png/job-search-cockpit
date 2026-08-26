@@ -13,7 +13,7 @@
 - Never commit, print, persist, or return `APIFY_API_TOKEN` or `JSEARCH_API_KEY`; load them only from the git-ignored `.env` file or the process environment.
 - Use HTTPS, exact provider host allowlists, fixed request timeouts, no redirects, and no retries, polling, webhooks, browser automation, sign-in, upload, sharing, or submission behavior.
 - Provider discovery is manual only. Do not create a scheduler, background task, or automatic weekly run.
-- The pilot limits are 40 LinkedIn listings, 25 Naukri listings, 25 Glassdoor listings, one JSearch request, and a US$0.50 maximum Apify charge per Actor. The real-data micro-run verification is limited to five listings per Apify Actor, US$0.10 per Actor when supported, and one JSearch request.
+- The pilot limits are 40 LinkedIn listings, 25 Naukri listings, 25 Glassdoor listings, one JSearch request bounded to 25 listings, and a US$0.50 maximum Apify charge per Actor. The real-data micro-run verification is limited to five listings per Apify Actor, US$0.10 per Actor when supported, and one JSearch request bounded to 25 listings.
 - Save only real public provider listings. Do not fabricate listings, create synthetic provider responses, or save live responses as test fixtures.
 - Keep all Phase I access behind `Phase1MatchingPort`; do not read Phase I tables or hard-code locked search-profile values.
 - A listing is a candidate, not an authorization. `VerifiedJobReadinessUnavailable` remains the normal runtime adapter until an explicit verification service produces a current authorization.
