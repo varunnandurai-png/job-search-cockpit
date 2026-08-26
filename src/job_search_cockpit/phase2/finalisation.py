@@ -135,6 +135,8 @@ class LocalResumeFinalisationService:
         authorization = self._authorization_for_attempt(attempt)
         projection = self._projection_for_attempt(attempt, authorization)
         document = build_canonical_resume_document(projection)
+        if document.content_fingerprint != attempt.canonical_model_fingerprint:
+            raise FinalisationError("The reviewed résumé content changed.")
         requirements = build_requirement_ledger(projection)
         return ResumeDocumentReview(
             attempt_id=attempt.id,
@@ -239,6 +241,7 @@ class LocalResumeFinalisationService:
     ) -> VerifiedJobPreparationAuthorization:
         authorization = self._preparation_port.authorization_for_resume(attempt.job_id)
         authorization = self._preparation_port.revalidate_resume_authorization(authorization)
+        self._validate_authorization(authorization)
         stored_binding = (
             attempt.job_id,
             attempt.job_revision_id,
