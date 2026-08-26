@@ -1,9 +1,11 @@
 # ruff: noqa: E501
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from re import sub
 from tempfile import TemporaryDirectory
+from unicodedata import normalize
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -22,6 +24,7 @@ from job_search_cockpit.phase2.document_rendering import (
 )
 from job_search_cockpit.phase2.models import (
     Phase2FinalResumeArtifact,
+    Phase2JobRevision,
     Phase2ResumeDocumentAttempt,
     Phase2ResumeDocumentAttemptEvent,
     Phase2ResumeRequirementLedger,
@@ -32,8 +35,12 @@ from job_search_cockpit.phase2.requirements import (
     RequirementLedgerError,
     build_requirement_ledger,
 )
-from job_search_cockpit.phase2.resume_documents import build_canonical_resume_document
+from job_search_cockpit.phase2.resume_documents import (
+    CanonicalResumeDocument,
+    build_canonical_resume_document,
+)
 from job_search_cockpit.phase2.resume_safety import (
+    VerifiedJobPreparationAuthorization,
     VerifiedJobPreparationPort,
     assert_phase3_requirement_ledger,
 )
@@ -74,8 +81,14 @@ class FinaliseResumeCommand:
 @dataclass(frozen=True, slots=True)
 class FinalResumeArtifact:
     attempt_id: str
+    job_id: str
+    job_revision_id: str
     docx_path: Path
+    docx_sha256: str
+    docx_byte_length: int
     pdf_path: Path
+    pdf_sha256: str
+    pdf_byte_length: int
     content_fingerprint: str
 
 
@@ -124,7 +137,11 @@ class LocalResumeFinalisationService:
         if (projection.fingerprint, document.content_fingerprint) != (attempt.projection_fingerprint, attempt.canonical_model_fingerprint):
             raise FinalisationError("The reviewed résumé content changed.")
         self._output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        stem = self._filename_stem(authorization.company_name, authorization.role_name)
+        stem = self._filename_stem(
+            authorization.company_name,
+            authorization.role_name,
+            self._has_final_resume_for_company(authorization.company_name),
+        )
         with TemporaryDirectory(dir=self._output_dir) as temp_dir:
             rendered = self._renderer.render(document=document, output_dir=Path(temp_dir) / "files", stem=stem, headshot_path=command.headshot_path)
             if extract_docx_text(rendered.docx_path) != document.plain_text or extract_pdf_text(rendered.pdf_path) != document.plain_text:
@@ -136,9 +153,136 @@ class LocalResumeFinalisationService:
             rendered.pdf_path.replace(artifact.pdf_path)
         return artifact
 
-    def _record_attempt(self, authorization: object, projection_fingerprint: str, content_fingerprint: str) -> str:
-        from job_search_cockpit.phase2.resume_safety import VerifiedJobPreparationAuthorization
-        assert isinstance(authorization, VerifiedJobPreparationAuthorization)
+    def artifacts_for(self, attempt_id: str) -> FinalResumeArtifact:
+        attempt = self._attempt(attempt_id)
+        authorization = self._authorization_for_attempt(attempt)
+        document = self._document_for_attempt(attempt, authorization)
+        with self._coordinator._session_factory() as session:
+            row = session.scalar(
+                select(Phase2FinalResumeArtifact).where(
+                    Phase2FinalResumeArtifact.attempt_id == attempt.id
+                )
+            )
+            if row is None:
+                raise FinalisationError("The final résumé artifacts are unavailable.")
+            session.expunge(row)
+        docx_path = self._artifact_path(row.docx_relative_path)
+        pdf_path = self._artifact_path(row.pdf_relative_path)
+        if (
+            row.job_id != attempt.job_id
+            or row.job_revision_id != attempt.job_revision_id
+            or row.projection_fingerprint != attempt.projection_fingerprint
+            or row.content_fingerprint != document.content_fingerprint
+            or not docx_path.is_file()
+            or not pdf_path.is_file()
+            or docx_path.stat().st_size != row.docx_byte_length
+            or pdf_path.stat().st_size != row.pdf_byte_length
+            or _sha256(docx_path) != row.docx_sha256
+            or _sha256(pdf_path) != row.pdf_sha256
+            or extract_docx_text(docx_path) != document.plain_text
+            or extract_pdf_text(pdf_path) != document.plain_text
+        ):
+            raise FinalisationError("The final résumé artifacts failed verification.")
+        return self._artifact_view(row, docx_path, pdf_path)
+
+    def _authorization_for_attempt(
+        self, attempt: Phase2ResumeDocumentAttempt
+    ) -> VerifiedJobPreparationAuthorization:
+        authorization = self._preparation_port.authorization_for_resume(attempt.job_id)
+        authorization = self._preparation_port.revalidate_resume_authorization(authorization)
+        stored_binding = (
+            attempt.job_id,
+            attempt.job_revision_id,
+            attempt.authorization_id,
+            attempt.authorization_nonce,
+            _as_utc(attempt.authorization_expires_at),
+            attempt.requirement_ledger_fingerprint,
+            tuple(str(item) for item in attempt.requirement_ids_json),
+            attempt.phase1_profile_fingerprint,
+            attempt.phase1_profile_generation,
+            attempt.phase1_readiness_fingerprint,
+            attempt.phase1_readiness_generation,
+            attempt.phase1_authority_fingerprint,
+            attempt.phase1_authority_generation,
+            attempt.phase1_restore_generation,
+            attempt.phase2_activation_generation,
+            attempt.phase2_restore_generation,
+        )
+        current_binding = (
+            authorization.job_id,
+            authorization.job_revision_id,
+            authorization.authorization_id,
+            authorization.authorization_nonce,
+            _as_utc(authorization.expires_at),
+            authorization.requirement_ledger_fingerprint,
+            authorization.requirement_ids,
+            authorization.phase1_profile_fingerprint,
+            authorization.phase1_profile_generation,
+            authorization.phase1_readiness_fingerprint,
+            authorization.phase1_readiness_generation,
+            authorization.phase1_authority_fingerprint,
+            authorization.phase1_authority_generation,
+            authorization.phase1_restore_generation,
+            authorization.phase2_activation_generation,
+            authorization.phase2_restore_generation,
+        )
+        if current_binding != stored_binding:
+            raise FinalisationError("The verified job authorization changed.")
+        return authorization
+
+    def _document_for_attempt(
+        self,
+        attempt: Phase2ResumeDocumentAttempt,
+        authorization: VerifiedJobPreparationAuthorization,
+    ) -> CanonicalResumeDocument:
+        requirement_ids = assert_phase3_requirement_ledger(authorization)
+        projection = self._phase1_port.resume_fact_projection(
+            Phase1ResumeFactProjectionRequest(requirement_ids=requirement_ids)
+        )
+        if self._phase1_port.revalidate_resume_fact_projection(projection) != projection:
+            raise FinalisationError("Approved résumé facts changed.")
+        if (
+            projection.fingerprint != attempt.projection_fingerprint
+            or projection.profile_fingerprint != attempt.phase1_profile_fingerprint
+            or projection.profile_generation != attempt.phase1_profile_generation
+            or projection.readiness_fingerprint != attempt.phase1_readiness_fingerprint
+            or projection.readiness_generation != attempt.phase1_readiness_generation
+            or projection.authority_fingerprint != attempt.phase1_authority_fingerprint
+            or projection.authority_generation != attempt.phase1_authority_generation
+            or projection.restore_generation != attempt.phase1_restore_generation
+        ):
+            raise FinalisationError("Approved résumé facts changed.")
+        document = build_canonical_resume_document(projection)
+        if document.content_fingerprint != attempt.canonical_model_fingerprint:
+            raise FinalisationError("The reviewed résumé content changed.")
+        return document
+
+    def _artifact_path(self, relative_path: str) -> Path:
+        base = self._output_dir.resolve()
+        candidate = (base / relative_path).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError as error:
+            raise FinalisationError("The final résumé artifact path is invalid.") from error
+        return candidate
+
+    def _has_final_resume_for_company(self, company: str) -> bool:
+        company_key = _safe_name(company).casefold()
+        with self._coordinator._session_factory() as session:
+            employers = session.scalars(
+                select(Phase2JobRevision.employer_name)
+                .join(
+                    Phase2ResumeDocumentAttempt,
+                    Phase2ResumeDocumentAttempt.job_revision_id == Phase2JobRevision.id,
+                )
+                .join(
+                    Phase2FinalResumeArtifact,
+                    Phase2FinalResumeArtifact.attempt_id == Phase2ResumeDocumentAttempt.id,
+                )
+            ).all()
+        return any(_safe_name(employer).casefold() == company_key for employer in employers)
+
+    def _record_attempt(self, authorization: VerifiedJobPreparationAuthorization, projection_fingerprint: str, content_fingerprint: str) -> str:
         def insert(session: Session) -> str:
             ledger = session.scalar(select(Phase2ResumeRequirementLedger).where(Phase2ResumeRequirementLedger.job_id == authorization.job_id, Phase2ResumeRequirementLedger.job_revision_id == authorization.job_revision_id, Phase2ResumeRequirementLedger.requirement_ledger_fingerprint == authorization.requirement_ledger_fingerprint))
             if ledger is None:
@@ -178,20 +322,50 @@ class LocalResumeFinalisationService:
                 raise FinalisationError("This résumé review has already been finalised.")
             session.add(Phase2FinalResumeArtifact(id=str(uuid4()), attempt_id=attempt.id, job_id=attempt.job_id, job_revision_id=attempt.job_revision_id, projection_fingerprint=attempt.projection_fingerprint, content_fingerprint=content_fingerprint, docx_relative_path=docx_target.name, docx_sha256=_sha256(docx), docx_byte_length=docx.stat().st_size, pdf_relative_path=pdf_target.name, pdf_sha256=_sha256(pdf), pdf_byte_length=pdf.stat().st_size))
             session.flush()
-            return FinalResumeArtifact(attempt.id, docx_target, pdf_target, content_fingerprint)
+            row = session.scalar(
+                select(Phase2FinalResumeArtifact).where(
+                    Phase2FinalResumeArtifact.attempt_id == attempt.id
+                )
+            )
+            assert row is not None
+            return self._artifact_view(row, docx_target, pdf_target)
         return self._coordinator.run(insert, "record_final_resume_artifact")
 
     @staticmethod
-    def _filename_stem(company: str, role: str) -> str:
+    def _artifact_view(
+        row: Phase2FinalResumeArtifact, docx_path: Path, pdf_path: Path
+    ) -> FinalResumeArtifact:
+        return FinalResumeArtifact(
+            attempt_id=row.attempt_id,
+            job_id=row.job_id,
+            job_revision_id=row.job_revision_id,
+            docx_path=docx_path,
+            docx_sha256=row.docx_sha256,
+            docx_byte_length=row.docx_byte_length,
+            pdf_path=pdf_path,
+            pdf_sha256=row.pdf_sha256,
+            pdf_byte_length=row.pdf_byte_length,
+            content_fingerprint=row.content_fingerprint,
+        )
+
+    @staticmethod
+    def _filename_stem(company: str, role: str, later_company_role: bool) -> str:
         company_part = _safe_name(company)
         role_part = _safe_name(role)
         if not company_part or not role_part:
             raise FinalisationError("The verified company and role are unavailable.")
-        return f"{role_part}_Varun_Resume_{company_part}"
+        if later_company_role:
+            return f"{role_part}_Varun_Resume_{company_part}"
+        return f"Varun_Resume_{company_part}"
 
 
 def _safe_name(value: str) -> str:
-    return sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_")
+    ascii_value = normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    return sub(r"[^A-Za-z0-9]+", "_", ascii_value.strip()).strip("_")[:80]
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _sha256(path: Path) -> str:
