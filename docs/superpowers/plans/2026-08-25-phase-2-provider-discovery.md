@@ -261,7 +261,7 @@ Run: `uv run pytest tests/integration/test_phase2_live_discovery.py::test_discov
 
 Expected: PASS without provider access or a listing payload.
 
-- [ ] **Step 5: Run the user-authorized real-data micro-run**
+- [x] **Step 5: Run the user-authorized real-data micro-run**
 
 Run only after the user explicitly reconfirms live provider access in that execution turn:
 
@@ -313,7 +313,7 @@ Run: `uv run pytest tests/integration/test_phase2_live_discovery.py::test_unveri
 
 Expected: PASS without a provider call or a listing payload.
 
-- [ ] **Step 5: Reconfirm a live verified listing manually**
+- [x] **Step 5: Reconfirm a live verified listing manually**
 
 Use only a persisted listing from the user-authorized micro-run. Show its safe public metadata in the authenticated local UI, obtain the exact verification confirmation, and run the focused integration check. Do not create a replacement listing, document, or application action.
 
