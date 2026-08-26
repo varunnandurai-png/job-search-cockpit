@@ -8,10 +8,10 @@ from job_search_cockpit.phase2.application_drafts import (
     ReusableAnswerService,
     ReusableAnswerStore,
 )
-from job_search_cockpit.phase2.finalisation import LocalResumeFinalisationService
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
 from job_search_cockpit.phase2.discovery import DiscoveryService
+from job_search_cockpit.phase2.finalisation import LocalResumeFinalisationService
 from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2MutationCoordinator
 from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationAttemptStore,
