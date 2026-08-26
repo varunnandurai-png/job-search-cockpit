@@ -215,6 +215,17 @@ class DiscoveryService:
         listing_limit: int | None,
         charge_limit: Decimal,
     ) -> tuple[_ProviderPlan, ...]:
+        del inputs, listing_limit, charge_limit
+        raise ProviderConfigurationError(
+            "Aggregator discovery is retired; configure approved official provider instances."
+        )
+
+    def _retired_aggregator_plans(
+        self,
+        inputs: Phase1ActivationInputs,
+        listing_limit: int | None,
+        charge_limit: Decimal,
+    ) -> tuple[_ProviderPlan, ...]:
         role = inputs.profile.payload.eligible_roles[0]
         location = inputs.profile.payload.locations[0]
         limits = ProviderLimits()

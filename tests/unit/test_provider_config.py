@@ -217,7 +217,7 @@ def test_jsearch_request_is_bounded_to_the_approved_https_search_endpoint() -> N
     assert prepared.json is None
 
 
-def test_micro_discovery_keeps_jsearch_within_its_separate_pilot_cap(tmp_path: Path) -> None:
+def test_discovery_planning_rejects_the_retired_aggregator_pipeline(tmp_path: Path) -> None:
     profile = build_profile_v1()
     inputs = Phase1ActivationInputs(
         acceptance_receipt=Phase1AcceptanceReceiptSnapshot(
@@ -250,9 +250,7 @@ def test_micro_discovery_keeps_jsearch_within_its_separate_pilot_cap(tmp_path: P
         ),
     )
 
-    plans = DiscoveryService(Phase2Settings(data_dir=tmp_path))._plans(
-        inputs, listing_limit=5, charge_limit=Decimal("0.10")
-    )
-
-    jsearch_plan = next(plan for plan in plans if plan.provider_id == "jsearch")
-    assert jsearch_plan.request.listing_limit == 25
+    with pytest.raises(ProviderConfigurationError, match="official provider instances"):
+        DiscoveryService(Phase2Settings(data_dir=tmp_path))._plans(
+            inputs, listing_limit=5, charge_limit=Decimal("0.10")
+        )
