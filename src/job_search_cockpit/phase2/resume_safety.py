@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from re import fullmatch
 from typing import Literal, Protocol
 from uuid import uuid4
 
@@ -33,6 +34,8 @@ class VerifiedJobPreparationAuthorization:
     phase1_restore_generation: int
     phase2_activation_generation: int
     phase2_restore_generation: int
+    requirement_ids: tuple[str, ...] = ()
+    requirement_ledger_fingerprint: str = ""
     unknown_mandatory_rule_codes: tuple[str, ...] = ()
 
 
@@ -57,6 +60,23 @@ class VerifiedJobReadinessUnavailable:
         del expected
         raise ResumePreparationError("verified job readiness is unavailable")
 
+
+def assert_phase3_requirement_ledger(
+    authorization: VerifiedJobPreparationAuthorization,
+) -> tuple[str, ...]:
+    requirement_ids = authorization.requirement_ids
+    if not requirement_ids or not authorization.requirement_ledger_fingerprint:
+        raise ResumePreparationError("The verified job requirement ledger is unavailable.")
+    if len(requirement_ids) > 32 or len(set(requirement_ids)) != len(requirement_ids):
+        raise ResumePreparationError("The verified job requirement ledger is invalid.")
+    if any(
+        fullmatch(r"[a-z][a-z0-9_.-]{0,254}", requirement_id) is None
+        for requirement_id in requirement_ids
+    ):
+        raise ResumePreparationError("The verified job requirement ledger is invalid.")
+    if len(authorization.requirement_ledger_fingerprint) != 64:
+        raise ResumePreparationError("The verified job requirement ledger is invalid.")
+    return requirement_ids
 
 @dataclass(frozen=True, slots=True)
 class ResumePreparationAttempt:

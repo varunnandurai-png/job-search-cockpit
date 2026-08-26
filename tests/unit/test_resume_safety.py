@@ -7,6 +7,7 @@ from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationError,
     ResumePreparationService,
     VerifiedJobPreparationAuthorization,
+    assert_phase3_requirement_ledger,
 )
 
 FUTURE_EXPIRY = datetime(2099, 1, 1, tzinfo=UTC)
@@ -143,3 +144,8 @@ def test_changed_authorization_stops_before_durable_preparation_metadata() -> No
 
     with pytest.raises(ResumePreparationError, match="changed"):
         service.start(job_id="sanitized-job-1", resume_kind="tailored")
+
+
+def test_phase3_denies_an_authorization_without_a_canonical_requirement_ledger() -> None:
+    with pytest.raises(ResumePreparationError, match="requirement ledger is unavailable"):
+        assert_phase3_requirement_ledger(_authorization())
