@@ -1,3 +1,4 @@
+from job_search_cockpit.phase2.assessment_types import ConfidenceState
 from job_search_cockpit.phase2.shortlist import ShortlistCandidate, focused_shortlist
 
 
@@ -23,3 +24,14 @@ def test_focused_shortlist_rejects_a_high_score_with_an_unresolved_hard_gate() -
     )
 
     assert tuple(candidate.assessment_id for candidate in shortlist) == ("qualified",)
+
+
+def test_focused_shortlist_orders_equal_scores_by_higher_confidence() -> None:
+    shortlist = focused_shortlist(
+        (
+            ShortlistCandidate("medium", 80, confidence=ConfidenceState.MEDIUM),
+            ShortlistCandidate("high", 80, confidence=ConfidenceState.HIGH),
+        )
+    )
+
+    assert tuple(candidate.assessment_id for candidate in shortlist) == ("high", "medium")
