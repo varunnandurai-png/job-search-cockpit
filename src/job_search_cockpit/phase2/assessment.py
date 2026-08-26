@@ -1,6 +1,27 @@
 from dataclasses import dataclass
 
+from job_search_cockpit.phase1_contract.snapshots import Phase1ResumeFactProjectionRequest
 from job_search_cockpit.phase2.assessment_types import EvidenceRelation
+from job_search_cockpit.phase2.requirements import build_requirement_ledger
+from job_search_cockpit.ports import Phase1MatchingPort
+
+
+class AssessmentUnavailable(ValueError):
+    """Raised when an assessment cannot use current approved Phase I evidence."""
+
+
+class AssessmentEvidenceService:
+    def __init__(self, phase1_port: Phase1MatchingPort) -> None:
+        self._phase1_port = phase1_port
+
+    def require_complete_evidence(self, requirement_ids: tuple[str, ...]) -> None:
+        projection = self._phase1_port.resume_fact_projection(
+            Phase1ResumeFactProjectionRequest(requirement_ids=requirement_ids)
+        )
+        if self._phase1_port.revalidate_resume_fact_projection(projection) != projection:
+            raise AssessmentUnavailable("Phase I evidence changed during assessment.")
+        if not build_requirement_ledger(projection).drafting_allowed:
+            raise AssessmentUnavailable("Assessment lacks approved evidence.")
 
 
 @dataclass(frozen=True, slots=True)

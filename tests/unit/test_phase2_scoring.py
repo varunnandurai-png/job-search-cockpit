@@ -1,6 +1,12 @@
 import pytest
 
-from job_search_cockpit.phase2.assessment import ComponentContribution, calculate_component_score
+from job_search_cockpit.phase1_contract.snapshots import Phase1ResumeFactProjection
+from job_search_cockpit.phase2.assessment import (
+    AssessmentEvidenceService,
+    AssessmentUnavailable,
+    ComponentContribution,
+    calculate_component_score,
+)
 from job_search_cockpit.phase2.assessment_types import (
     ConfidenceState,
     EvidenceRelation,
@@ -55,3 +61,36 @@ def test_component_score_caps_duplicate_evidence_at_its_fixed_maximum() -> None:
     )
 
     assert score == 25
+
+
+def test_evidence_service_blocks_a_projection_with_an_unmet_requirement() -> None:
+    projection = Phase1ResumeFactProjection(
+        requirement_ids=("role.product",),
+        facts=(),
+        profile_fingerprint="a" * 64,
+        profile_generation=1,
+        readiness_fingerprint="b" * 64,
+        readiness_generation=1,
+        authority_fingerprint="c" * 64,
+        authority_generation=1,
+        restore_generation=0,
+        fingerprint="d" * 64,
+    )
+
+    service = AssessmentEvidenceService(_ProjectionPort(projection))
+
+    with pytest.raises(AssessmentUnavailable, match="approved evidence"):
+        service.require_complete_evidence(("role.product",))
+
+
+class _ProjectionPort:
+    def __init__(self, projection: Phase1ResumeFactProjection) -> None:
+        self.projection = projection
+
+    def resume_fact_projection(self, _request: object) -> Phase1ResumeFactProjection:
+        return self.projection
+
+    def revalidate_resume_fact_projection(
+        self, _expected: Phase1ResumeFactProjection
+    ) -> Phase1ResumeFactProjection:
+        return self.projection
