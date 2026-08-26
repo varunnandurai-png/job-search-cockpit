@@ -194,7 +194,7 @@ class CatalogVerifiedJobPreparationPort:
     ) -> VerifiedJobPreparationAuthorization:
         if self._phase1_port is None or self._activation_service is None:
             raise ResumePreparationError("verified job readiness is unavailable")
-        if verification.expires_at <= datetime.now(UTC):
+        if _as_utc(verification.expires_at) <= datetime.now(UTC):
             raise ResumePreparationError("verified job readiness is unavailable")
         try:
             view = self._activation_service.revalidate_before(Phase2Action.VERIFICATION)
@@ -239,7 +239,7 @@ def _authorization(
         authorization_id=verification.authorization_id,
         authorization_nonce=verification.authorization_nonce,
         eligibility="eligible",
-        expires_at=verification.expires_at,
+        expires_at=_as_utc(verification.expires_at),
         phase1_profile_fingerprint=verification.phase1_profile_fingerprint,
         phase1_profile_generation=verification.phase1_profile_generation,
         phase1_readiness_fingerprint=verification.phase1_readiness_fingerprint,
@@ -250,6 +250,10 @@ def _authorization(
         phase2_activation_generation=verification.phase2_activation_generation,
         phase2_restore_generation=verification.phase2_restore_generation,
     )
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 __all__ = [
