@@ -9,6 +9,7 @@ from job_search_cockpit.phase2.assessment import (
     anchor_points,
     calculate_component_score,
     component_anchor,
+    resolve_confidence,
 )
 from job_search_cockpit.phase2.assessment_types import (
     ComponentAnchor,
@@ -93,6 +94,15 @@ def test_anchor_points_use_only_the_approved_discrete_values() -> None:
     assert anchor_points(15, ComponentAnchor.PARTIAL) == 8
     assert anchor_points(10, ComponentAnchor.ADJACENT) == 3
     assert anchor_points(5, ComponentAnchor.CLOSE) == 5
+
+
+def test_confidence_is_low_for_unlisted_or_high_severity_reasons() -> None:
+    assert resolve_confidence(("required_clause_uncertain",)) is ConfidenceState.LOW
+    assert resolve_confidence(("unexpected_reason",)) is ConfidenceState.LOW
+
+
+def test_confidence_is_medium_only_for_preferred_uncertainty() -> None:
+    assert resolve_confidence(("preferred_clause_uncertain",)) is ConfidenceState.MEDIUM
 
 
 def test_evidence_service_blocks_a_projection_with_an_unmet_requirement() -> None:

@@ -22,7 +22,7 @@ class EvidenceRelation(StrEnum):
 
 class ConfidenceState(StrEnum):
     HIGH = "high"
-    MODERATE = "moderate"
+    MEDIUM = "medium"
     LOW = "low"
     BLOCKED = "blocked"
 

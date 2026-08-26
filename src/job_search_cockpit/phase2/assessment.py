@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from job_search_cockpit.phase1_contract.snapshots import Phase1ResumeFactProjectionRequest
 from job_search_cockpit.phase2.assessment_types import (
     ComponentAnchor,
+    ConfidenceState,
     EvidenceRelation,
     RequirementKind,
 )
@@ -26,6 +27,38 @@ class AssessmentEvidenceService:
             raise AssessmentUnavailable("Phase I evidence changed during assessment.")
         if not build_requirement_ledger(projection).drafting_allowed:
             raise AssessmentUnavailable("Assessment lacks approved evidence.")
+
+
+_LOW_CONFIDENCE_REASONS = frozenset(
+    {
+        "unofficial_or_stale_source",
+        "coverage_ledger_incomplete",
+        "fact_set_incomplete",
+        "gate_clause_uncertain",
+        "required_clause_uncertain",
+        "material_responsibility_uncertain",
+        "mapping_predicate_unvalidated",
+        "parse_or_schema_failure",
+        "assessment_instability",
+        "current_generation_unavailable",
+    }
+)
+_MEDIUM_CONFIDENCE_REASONS = frozenset(
+    {
+        "preferred_clause_uncertain",
+        "preferred_mapping_none_due_ambiguity",
+        "preferred_taxonomy_adjudication_pending",
+    }
+)
+
+
+def resolve_confidence(reason_codes: tuple[str, ...]) -> ConfidenceState:
+    reasons = set(reason_codes)
+    if not reasons:
+        return ConfidenceState.HIGH
+    if reasons & _LOW_CONFIDENCE_REASONS or not reasons <= _MEDIUM_CONFIDENCE_REASONS:
+        return ConfidenceState.LOW
+    return ConfidenceState.MEDIUM
 
 
 @dataclass(frozen=True, slots=True)
