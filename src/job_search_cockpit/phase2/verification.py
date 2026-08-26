@@ -19,6 +19,7 @@ from job_search_cockpit.phase2.models import (
     Phase2JobRecord,
     Phase2JobRevision,
     Phase2JobVerification,
+    Phase2ResumeRequirementLedger,
     Phase2SourceListingObservation,
 )
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
@@ -155,21 +156,26 @@ class CatalogVerifiedJobPreparationPort:
         return cls()
 
     def authorization_for_resume(self, job_id: str) -> VerifiedJobPreparationAuthorization:
-        verification, job = self._current_verification(job_id)
-        return self._revalidate(job.id, verification)
+        verification, job, revision, ledger = self._current_verification(job_id)
+        return self._revalidate(job, revision, verification, ledger)
 
     def revalidate_resume_authorization(
         self, expected: VerifiedJobPreparationAuthorization
     ) -> VerifiedJobPreparationAuthorization:
-        verification, job = self._current_verification(expected.job_id)
-        authorization = self._revalidate(job.id, verification)
+        verification, job, revision, ledger = self._current_verification(expected.job_id)
+        authorization = self._revalidate(job, revision, verification, ledger)
         if authorization != expected:
             raise ResumePreparationError("verified job readiness is unavailable")
         return authorization
 
     def _current_verification(
         self, job_id: str
-    ) -> tuple[Phase2JobVerification, Phase2JobRecord]:
+    ) -> tuple[
+        Phase2JobVerification,
+        Phase2JobRecord,
+        Phase2JobRevision,
+        Phase2ResumeRequirementLedger | None,
+    ]:
         if self._coordinator is None:
             raise ResumePreparationError("verified job readiness is unavailable")
         with self._coordinator._session_factory() as session:
@@ -187,10 +193,25 @@ class CatalogVerifiedJobPreparationPort:
             )
             if verification is None:
                 raise ResumePreparationError("verified job readiness is unavailable")
-            return verification, job
+            ledger = session.scalar(
+                select(Phase2ResumeRequirementLedger)
+                .where(
+                    Phase2ResumeRequirementLedger.job_id == job.id,
+                    Phase2ResumeRequirementLedger.job_revision_id == verification.job_revision_id,
+                )
+                .order_by(Phase2ResumeRequirementLedger.created_at.desc())
+            )
+            revision = session.get(Phase2JobRevision, verification.job_revision_id)
+            if revision is None:
+                raise ResumePreparationError("verified job readiness is unavailable")
+            return verification, job, revision, ledger
 
     def _revalidate(
-        self, job_id: str, verification: Phase2JobVerification
+        self,
+        job: Phase2JobRecord,
+        revision: Phase2JobRevision,
+        verification: Phase2JobVerification,
+        ledger: Phase2ResumeRequirementLedger | None,
     ) -> VerifiedJobPreparationAuthorization:
         if self._phase1_port is None or self._activation_service is None:
             raise ResumePreparationError("verified job readiness is unavailable")
@@ -214,7 +235,7 @@ class CatalogVerifiedJobPreparationPort:
             or view.restore_generation != verification.phase2_restore_generation
         ):
             raise ResumePreparationError("verified job readiness is unavailable")
-        return _authorization(job_id, verification)
+        return _authorization(job.id, verification, revision, ledger)
 
 
 def _phase1_fields(inputs: Phase1ActivationInputs) -> dict[str, object]:
@@ -230,7 +251,10 @@ def _phase1_fields(inputs: Phase1ActivationInputs) -> dict[str, object]:
 
 
 def _authorization(
-    job_id: str, verification: Phase2JobVerification
+    job_id: str,
+    verification: Phase2JobVerification,
+    revision: Phase2JobRevision | None = None,
+    ledger: Phase2ResumeRequirementLedger | None = None,
 ) -> VerifiedJobPreparationAuthorization:
     return VerifiedJobPreparationAuthorization(
         job_id=job_id,
@@ -249,6 +273,14 @@ def _authorization(
         phase1_restore_generation=verification.phase1_restore_generation,
         phase2_activation_generation=verification.phase2_activation_generation,
         phase2_restore_generation=verification.phase2_restore_generation,
+        requirement_ids=(
+            tuple(str(item) for item in ledger.requirement_ids_json) if ledger else ()
+        ),
+        requirement_ledger_fingerprint=(
+            ledger.requirement_ledger_fingerprint if ledger else ""
+        ),
+        company_name=(revision.employer_name if revision is not None else ""),
+        role_name=(revision.title if revision is not None else ""),
     )
 
 

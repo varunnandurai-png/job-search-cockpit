@@ -36,6 +36,8 @@ class VerifiedJobPreparationAuthorization:
     phase2_restore_generation: int
     requirement_ids: tuple[str, ...] = ()
     requirement_ledger_fingerprint: str = ""
+    company_name: str = ""
+    role_name: str = ""
     unknown_mandatory_rule_codes: tuple[str, ...] = ()
 
 

@@ -23,3 +23,7 @@ class Phase2Settings:
     @property
     def recovery_ledger_path(self) -> Path:
         return self.data_dir / "job-catalog-recovery.jsonl"
+
+    @property
+    def final_resume_dir(self) -> Path:
+        return self.data_dir / "final-resumes"

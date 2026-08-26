@@ -8,6 +8,7 @@ from job_search_cockpit.phase2.application_drafts import (
     ReusableAnswerService,
     ReusableAnswerStore,
 )
+from job_search_cockpit.phase2.finalisation import LocalResumeFinalisationService
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
 from job_search_cockpit.phase2.discovery import DiscoveryService
@@ -31,6 +32,7 @@ class Phase2Runtime:
     discovery_service: DiscoveryService
     verified_job_authorization_service: VerifiedJobAuthorizationService
     resume_preparation_service: ResumePreparationService
+    resume_finalisation_service: LocalResumeFinalisationService
     reusable_answer_service: ReusableAnswerService
     application_draft_service: ApplicationDraftService
 
@@ -66,6 +68,12 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         verified_job_authorization_service=verification_service,
         resume_preparation_service=ResumePreparationService(
             preparation_port, ResumePreparationAttemptStore(coordinator)
+        ),
+        resume_finalisation_service=LocalResumeFinalisationService(
+            preparation_port,
+            phase1_port,
+            coordinator,
+            phase2_settings.final_resume_dir,
         ),
         reusable_answer_service=ReusableAnswerService(
             phase1_port, ReusableAnswerStore(coordinator)
