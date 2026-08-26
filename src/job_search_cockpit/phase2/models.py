@@ -166,6 +166,98 @@ class Phase2FinalArtifact(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class Phase2ResumeRequirementLedger(Phase2Base):
+    __tablename__ = "phase2_resume_requirement_ledgers"
+    __table_args__ = (
+        CheckConstraint(
+            "source_kind = 'phase2_assessment'",
+            name="ck_phase2_resume_requirement_ledger_source",
+        ),
+        UniqueConstraint(
+            "job_revision_id",
+            "requirement_ledger_fingerprint",
+            name="uq_phase2_resume_requirement_ledger_fingerprint",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("phase2_job_records.id"))
+    job_revision_id: Mapped[str] = mapped_column(ForeignKey("phase2_job_revisions.id"))
+    requirement_ids_json: Mapped[list[object]] = mapped_column(JSON)
+    requirement_ledger_fingerprint: Mapped[str] = mapped_column(String(64))
+    source_kind: Mapped[str] = mapped_column(String(32), default="phase2_assessment")
+    phase2_activation_generation: Mapped[int] = mapped_column(Integer)
+    phase2_restore_generation: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ResumeDocumentAttempt(Phase2Base):
+    __tablename__ = "phase2_resume_document_attempts"
+    __table_args__ = (
+        UniqueConstraint("authorization_id"),
+        UniqueConstraint("authorization_nonce"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(120))
+    job_revision_id: Mapped[str] = mapped_column(String(120))
+    requirement_ledger_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_resume_requirement_ledgers.id")
+    )
+    requirement_ledger_fingerprint: Mapped[str] = mapped_column(String(64))
+    requirement_ids_json: Mapped[list[object]] = mapped_column(JSON)
+    authorization_id: Mapped[str] = mapped_column(String(120))
+    authorization_nonce: Mapped[str] = mapped_column(String(120))
+    authorization_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    projection_fingerprint: Mapped[str] = mapped_column(String(64))
+    canonical_model_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_profile_generation: Mapped[int] = mapped_column(Integer)
+    phase1_readiness_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_readiness_generation: Mapped[int] = mapped_column(Integer)
+    phase1_authority_fingerprint: Mapped[str] = mapped_column(String(64))
+    phase1_authority_generation: Mapped[int] = mapped_column(Integer)
+    phase1_restore_generation: Mapped[int] = mapped_column(Integer)
+    phase2_activation_generation: Mapped[int] = mapped_column(Integer)
+    phase2_restore_generation: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ResumeDocumentAttemptEvent(Phase2Base):
+    __tablename__ = "phase2_resume_document_attempt_events"
+    __table_args__ = (
+        CheckConstraint(
+            "kind = 'finalisation_failed'",
+            name="ck_phase2_resume_document_attempt_event_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("phase2_resume_document_attempts.id"))
+    kind: Mapped[str] = mapped_column(String(32), default="finalisation_failed")
+    reason_code: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2FinalResumeArtifact(Phase2Base):
+    __tablename__ = "phase2_final_resume_artifacts"
+    __table_args__ = (UniqueConstraint("attempt_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("phase2_resume_document_attempts.id"))
+    job_id: Mapped[str] = mapped_column(String(120))
+    job_revision_id: Mapped[str] = mapped_column(String(120))
+    projection_fingerprint: Mapped[str] = mapped_column(String(64))
+    content_fingerprint: Mapped[str] = mapped_column(String(64))
+    docx_relative_path: Mapped[str] = mapped_column(String(260))
+    docx_sha256: Mapped[str] = mapped_column(String(64))
+    docx_byte_length: Mapped[int] = mapped_column(Integer)
+    pdf_relative_path: Mapped[str] = mapped_column(String(260))
+    pdf_sha256: Mapped[str] = mapped_column(String(64))
+    pdf_byte_length: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class Phase2DiscoveryRun(Phase2Base):
     __tablename__ = "phase2_discovery_runs"
 
