@@ -6,9 +6,11 @@ from job_search_cockpit.phase2.assessment import (
     AssessmentUnavailable,
     ComponentContribution,
     ComponentRequirement,
+    QualifiedBandInputs,
     anchor_points,
     calculate_component_score,
     component_anchor,
+    qualified_match_band,
     resolve_confidence,
 )
 from job_search_cockpit.phase2.assessment_types import (
@@ -17,6 +19,7 @@ from job_search_cockpit.phase2.assessment_types import (
     EvidenceRelation,
     GateResult,
     MatchScoreComponents,
+    QualifiedMatchBand,
     RequirementKind,
 )
 
@@ -103,6 +106,20 @@ def test_confidence_is_low_for_unlisted_or_high_severity_reasons() -> None:
 
 def test_confidence_is_medium_only_for_preferred_uncertainty() -> None:
     assert resolve_confidence(("preferred_clause_uncertain",)) is ConfidenceState.MEDIUM
+
+
+def test_high_raw_score_with_a_required_gap_is_not_strong() -> None:
+    band = qualified_match_band(
+        QualifiedBandInputs(
+            raw_score=90,
+            meaningful_role_and_responsibility=True,
+            worthwhile_structure=True,
+            unsupported_required=True,
+            all_critical_floors_pass=True,
+        )
+    )
+
+    assert band is QualifiedMatchBand.WORTHWHILE_WITH_REQUIRED_GAP
 
 
 def test_evidence_service_blocks_a_projection_with_an_unmet_requirement() -> None:

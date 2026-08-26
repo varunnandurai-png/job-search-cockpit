@@ -35,6 +35,14 @@ class ComponentAnchor(StrEnum):
     CLOSE = "close"
 
 
+class QualifiedMatchBand(StrEnum):
+    WEAK = "weak"
+    EXPLORATORY = "exploratory"
+    WORTHWHILE_WITH_REQUIRED_GAP = "worthwhile_with_required_gap"
+    STRONG = "strong"
+    WORTHWHILE = "worthwhile"
+
+
 @dataclass(frozen=True, slots=True)
 class MatchScoreComponents:
     """The fixed seven-component Phase II match-score breakdown."""

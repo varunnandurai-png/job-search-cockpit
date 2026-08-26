@@ -5,6 +5,7 @@ from job_search_cockpit.phase2.assessment_types import (
     ComponentAnchor,
     ConfidenceState,
     EvidenceRelation,
+    QualifiedMatchBand,
     RequirementKind,
 )
 from job_search_cockpit.phase2.requirements import build_requirement_ledger
@@ -59,6 +60,31 @@ def resolve_confidence(reason_codes: tuple[str, ...]) -> ConfidenceState:
     if reasons & _LOW_CONFIDENCE_REASONS or not reasons <= _MEDIUM_CONFIDENCE_REASONS:
         return ConfidenceState.LOW
     return ConfidenceState.MEDIUM
+
+
+@dataclass(frozen=True, slots=True)
+class QualifiedBandInputs:
+    raw_score: int
+    meaningful_role_and_responsibility: bool
+    worthwhile_structure: bool
+    unsupported_required: bool
+    all_critical_floors_pass: bool
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.raw_score <= 100:
+            raise ValueError("raw score must be between zero and 100")
+
+
+def qualified_match_band(inputs: QualifiedBandInputs) -> QualifiedMatchBand:
+    if inputs.raw_score < 55 or not inputs.meaningful_role_and_responsibility:
+        return QualifiedMatchBand.WEAK
+    if inputs.raw_score < 70 or not inputs.worthwhile_structure:
+        return QualifiedMatchBand.EXPLORATORY
+    if inputs.unsupported_required:
+        return QualifiedMatchBand.WORTHWHILE_WITH_REQUIRED_GAP
+    if inputs.raw_score >= 85 and inputs.all_critical_floors_pass:
+        return QualifiedMatchBand.STRONG
+    return QualifiedMatchBand.WORTHWHILE
 
 
 @dataclass(frozen=True, slots=True)
