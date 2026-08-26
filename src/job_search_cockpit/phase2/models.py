@@ -363,3 +363,74 @@ class Phase2JobVerification(Phase2Base):
     phase2_restore_generation: Mapped[int] = mapped_column(Integer)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2JobGateAssessment(Phase2Base):
+    __tablename__ = "phase2_job_gate_assessments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_revision_id: Mapped[str] = mapped_column(ForeignKey("phase2_job_revisions.id"))
+    profile_fingerprint: Mapped[str] = mapped_column(String(64))
+    result: Mapped[str] = mapped_column(String(16))
+    reason_codes_json: Mapped[list[object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2LocationEligibilityPath(Phase2Base):
+    __tablename__ = "phase2_location_eligibility_paths"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_gate_assessment_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_job_gate_assessments.id")
+    )
+    location_fingerprint: Mapped[str] = mapped_column(String(64))
+    result: Mapped[str] = mapped_column(String(16))
+    reason_codes_json: Mapped[list[object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2MatchAssessment(Phase2Base):
+    __tablename__ = "phase2_match_assessments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_revision_id: Mapped[str] = mapped_column(ForeignKey("phase2_job_revisions.id"))
+    job_gate_assessment_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_job_gate_assessments.id")
+    )
+    rubric_version: Mapped[str] = mapped_column(String(64))
+    total_score: Mapped[int] = mapped_column(Integer)
+    confidence: Mapped[str] = mapped_column(String(16))
+    fact_set_fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2MatchComponent(Phase2Base):
+    __tablename__ = "phase2_match_components"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    match_assessment_id: Mapped[str] = mapped_column(ForeignKey("phase2_match_assessments.id"))
+    component: Mapped[str] = mapped_column(String(32))
+    score: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2RequirementMapping(Phase2Base):
+    __tablename__ = "phase2_requirement_mappings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    match_assessment_id: Mapped[str] = mapped_column(ForeignKey("phase2_match_assessments.id"))
+    requirement_id: Mapped[str] = mapped_column(String(120))
+    claim_id: Mapped[str | None] = mapped_column(String(120))
+    relation: Mapped[str] = mapped_column(String(16))
+    reason_code: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2ShortlistDecision(Phase2Base):
+    __tablename__ = "phase2_shortlist_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    match_assessment_id: Mapped[str] = mapped_column(ForeignKey("phase2_match_assessments.id"))
+    decision: Mapped[str] = mapped_column(String(32))
+    reason_codes_json: Mapped[list[object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
