@@ -1,9 +1,11 @@
 # ruff: noqa: E501
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from re import sub
+from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 from unicodedata import normalize
 from uuid import uuid4
@@ -125,33 +127,55 @@ class LocalResumeFinalisationService:
         if not command.headshot_path.is_file():
             raise FinalisationError("A local professional headshot is required.")
         attempt = self._attempt(command.attempt_id)
-        authorization = self._preparation_port.authorization_for_resume(attempt.job_id)
-        if authorization.authorization_id != attempt.authorization_id:
-            raise FinalisationError("The verified job authorization changed.")
-        requirement_ids = assert_phase3_requirement_ledger(authorization)
-        authorization = self._preparation_port.revalidate_resume_authorization(authorization)
-        projection = self._phase1_port.resume_fact_projection(Phase1ResumeFactProjectionRequest(requirement_ids=requirement_ids))
-        if self._phase1_port.revalidate_resume_fact_projection(projection) != projection:
-            raise FinalisationError("Approved résumé facts changed before finalisation.")
-        document = build_canonical_resume_document(projection)
-        if (projection.fingerprint, document.content_fingerprint) != (attempt.projection_fingerprint, attempt.canonical_model_fingerprint):
-            raise FinalisationError("The reviewed résumé content changed.")
-        self._output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        stem = self._filename_stem(
-            authorization.company_name,
-            authorization.role_name,
-            self._has_final_resume_for_company(authorization.company_name),
-        )
-        with TemporaryDirectory(dir=self._output_dir) as temp_dir:
-            rendered = self._renderer.render(document=document, output_dir=Path(temp_dir) / "files", stem=stem, headshot_path=command.headshot_path)
-            if extract_docx_text(rendered.docx_path) != document.plain_text or extract_pdf_text(rendered.pdf_path) != document.plain_text:
-                self._record_failure(attempt.id, "content_mismatch")
-                raise FinalisationError("The rendered files do not match the reviewed résumé.")
-            artifact = self._record_artifact(attempt, rendered.docx_path, rendered.pdf_path, document.content_fingerprint)
-            artifact.docx_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            rendered.docx_path.replace(artifact.docx_path)
-            rendered.pdf_path.replace(artifact.pdf_path)
-        return artifact
+        published: tuple[Path, ...] = ()
+        try:
+            if self._artifact_row(attempt.id) is not None:
+                raise FinalisationError("This résumé review has already been finalised.")
+            authorization = self._authorization_for_attempt(attempt)
+            document = self._document_for_attempt(attempt, authorization)
+            self._output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._output_dir.chmod(0o700)
+            stem = self._filename_stem(
+                authorization.company_name,
+                authorization.role_name,
+                self._has_final_resume_for_company(authorization.company_name),
+            )
+            with TemporaryDirectory(dir=self._output_dir) as temp_dir:
+                rendered = self._renderer.render(
+                    document=document,
+                    output_dir=Path(temp_dir) / "files",
+                    stem=stem,
+                    headshot_path=command.headshot_path,
+                )
+                if (
+                    extract_docx_text(rendered.docx_path) != document.plain_text
+                    or extract_pdf_text(rendered.pdf_path) != document.plain_text
+                ):
+                    raise FinalisationError(
+                        "The rendered files do not match the reviewed résumé."
+                    )
+                self._document_for_attempt(
+                    attempt, self._authorization_for_attempt(attempt)
+                )
+                docx_target = self._output_dir / rendered.docx_path.name
+                pdf_target = self._output_dir / rendered.pdf_path.name
+                published = self._publish_pair_exclusively(
+                    rendered.docx_path, docx_target, rendered.pdf_path, pdf_target
+                )
+                self._document_for_attempt(
+                    attempt, self._authorization_for_attempt(attempt)
+                )
+                return self._record_artifact(
+                    attempt, docx_target, pdf_target, document.content_fingerprint
+                )
+        except Exception as error:
+            for path in published:
+                path.unlink(missing_ok=True)
+            with suppress(Exception):
+                self._record_failure(attempt.id, _failure_reason(error))
+            if isinstance(error, FinalisationError):
+                raise
+            raise FinalisationError("Résumé finalisation failed safely.") from error
 
     def artifacts_for(self, attempt_id: str) -> FinalResumeArtifact:
         attempt = self._attempt(attempt_id)
@@ -266,6 +290,17 @@ class LocalResumeFinalisationService:
             raise FinalisationError("The final résumé artifact path is invalid.") from error
         return candidate
 
+    def _artifact_row(self, attempt_id: str) -> Phase2FinalResumeArtifact | None:
+        with self._coordinator._session_factory() as session:
+            row = session.scalar(
+                select(Phase2FinalResumeArtifact).where(
+                    Phase2FinalResumeArtifact.attempt_id == attempt_id
+                )
+            )
+            if row is not None:
+                session.expunge(row)
+            return row
+
     def _has_final_resume_for_company(self, company: str) -> bool:
         company_key = _safe_name(company).casefold()
         with self._coordinator._session_factory() as session:
@@ -315,12 +350,10 @@ class LocalResumeFinalisationService:
         self._coordinator.run(insert, "record_resume_finalisation_failure")
 
     def _record_artifact(self, attempt: Phase2ResumeDocumentAttempt, docx: Path, pdf: Path, content_fingerprint: str) -> FinalResumeArtifact:
-        docx_target = self._output_dir / docx.name
-        pdf_target = self._output_dir / pdf.name
         def insert(session: Session) -> FinalResumeArtifact:
             if session.scalar(select(Phase2FinalResumeArtifact).where(Phase2FinalResumeArtifact.attempt_id == attempt.id)) is not None:
                 raise FinalisationError("This résumé review has already been finalised.")
-            session.add(Phase2FinalResumeArtifact(id=str(uuid4()), attempt_id=attempt.id, job_id=attempt.job_id, job_revision_id=attempt.job_revision_id, projection_fingerprint=attempt.projection_fingerprint, content_fingerprint=content_fingerprint, docx_relative_path=docx_target.name, docx_sha256=_sha256(docx), docx_byte_length=docx.stat().st_size, pdf_relative_path=pdf_target.name, pdf_sha256=_sha256(pdf), pdf_byte_length=pdf.stat().st_size))
+            session.add(Phase2FinalResumeArtifact(id=str(uuid4()), attempt_id=attempt.id, job_id=attempt.job_id, job_revision_id=attempt.job_revision_id, projection_fingerprint=attempt.projection_fingerprint, content_fingerprint=content_fingerprint, docx_relative_path=docx.name, docx_sha256=_sha256(docx), docx_byte_length=docx.stat().st_size, pdf_relative_path=pdf.name, pdf_sha256=_sha256(pdf), pdf_byte_length=pdf.stat().st_size))
             session.flush()
             row = session.scalar(
                 select(Phase2FinalResumeArtifact).where(
@@ -328,8 +361,36 @@ class LocalResumeFinalisationService:
                 )
             )
             assert row is not None
-            return self._artifact_view(row, docx_target, pdf_target)
+            return self._artifact_view(row, docx, pdf)
         return self._coordinator.run(insert, "record_final_resume_artifact")
+
+    @staticmethod
+    def _publish_pair_exclusively(
+        docx_source: Path,
+        docx_target: Path,
+        pdf_source: Path,
+        pdf_target: Path,
+    ) -> tuple[Path, Path]:
+        published: list[Path] = []
+        try:
+            for source, target in (
+                (docx_source, docx_target),
+                (pdf_source, pdf_target),
+            ):
+                try:
+                    with source.open("rb") as source_stream, target.open("xb") as target_stream:
+                        copyfileobj(source_stream, target_stream)
+                except FileExistsError as error:
+                    raise FinalisationError(
+                        "A résumé output with this filename already exists."
+                    ) from error
+                target.chmod(0o600)
+                published.append(target)
+        except Exception:
+            for path in published:
+                path.unlink(missing_ok=True)
+            raise
+        return docx_target, pdf_target
 
     @staticmethod
     def _artifact_view(
@@ -370,6 +431,21 @@ def _as_utc(value: datetime) -> datetime:
 
 def _sha256(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+
+def _failure_reason(error: Exception) -> str:
+    message = str(error).casefold()
+    if "already been finalised" in message:
+        return "replay_denied"
+    if "already exists" in message:
+        return "output_collision"
+    if "authorization changed" in message:
+        return "authorization_drift"
+    if "facts changed" in message or "content changed" in message:
+        return "projection_drift"
+    if "rendered files" in message:
+        return "content_mismatch"
+    return "render_or_publication_failed"
 
 
 def prepare_finalisation(
