@@ -26,9 +26,9 @@ _APIFY_PROVIDER_IDS = {
     APIFY_GLASSDOOR_ACTOR: "apify-glassdoor",
 }
 _APIFY_LISTING_HOSTS = {
-    APIFY_LINKEDIN_ACTOR: "www.linkedin.com",
-    APIFY_NAUKRI_ACTOR: "www.naukri.com",
-    APIFY_GLASSDOOR_ACTOR: "www.glassdoor.com",
+    APIFY_LINKEDIN_ACTOR: frozenset({"www.linkedin.com", "in.linkedin.com"}),
+    APIFY_NAUKRI_ACTOR: frozenset({"www.naukri.com"}),
+    APIFY_GLASSDOOR_ACTOR: frozenset({"www.glassdoor.com"}),
 }
 
 
@@ -302,7 +302,7 @@ def _compensation_text(value: object) -> str | None:
     return None
 
 
-def _canonical_listing_url(value: str, approved_host: str) -> str:
+def _canonical_listing_url(value: str, approved_hosts: frozenset[str]) -> str:
     try:
         parsed = urlsplit(value)
         port = parsed.port
@@ -312,14 +312,15 @@ def _canonical_listing_url(value: str, approved_host: str) -> str:
         ) from None
     if (
         parsed.scheme != "https"
-        or parsed.hostname != approved_host
+        or parsed.hostname not in approved_hosts
         or parsed.username is not None
         or parsed.password is not None
         or port is not None
         or not parsed.path
     ):
         raise ProviderResponseError("Provider listing lacks a stable identifier or public URL.")
-    return urlunsplit(("https", approved_host, parsed.path, "", ""))
+    assert parsed.hostname is not None
+    return urlunsplit(("https", parsed.hostname, parsed.path, "", ""))
 
 
 def _canonical_public_url(value: str) -> str:

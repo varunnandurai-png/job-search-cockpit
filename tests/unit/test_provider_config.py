@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -122,6 +123,18 @@ def test_apify_linkedin_request_is_bounded_to_the_approved_https_actor_endpoint(
         "location": "bengaluru",
         "limitPerSource": 5,
     }
+
+
+def test_apify_linkedin_accepts_the_documented_india_subdomain_for_public_listing_urls() -> None:
+    listing = ApifyProvider(APIFY_LINKEDIN_ACTOR)._parse_listing(
+        {
+            "id": "sanitized-linkedin-id",
+            "link": "https://in.linkedin.com/jobs/view/1234567890?tracking=removed",
+        },
+        datetime.now(UTC),
+    )
+
+    assert listing.canonical_url == "https://in.linkedin.com/jobs/view/1234567890"
 
 
 def test_apify_naukri_request_is_bounded_to_the_approved_https_actor_endpoint() -> None:
