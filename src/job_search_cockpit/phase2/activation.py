@@ -177,9 +177,13 @@ class Phase2ActivationService:
 
     def revalidate_before(self, action: Phase2Action) -> Phase2ActivationView:
         view = self.validate_current()
-        if action not in {Phase2Action.ACTIVATION_VIEW, Phase2Action.DISCOVERY}:
+        if action not in {
+            Phase2Action.ACTIVATION_VIEW,
+            Phase2Action.DISCOVERY,
+            Phase2Action.VERIFICATION,
+        }:
             raise Phase2ActivationUnavailable("This Phase II action is not implemented.")
-        if action == Phase2Action.DISCOVERY and view.state != "active":
+        if action in {Phase2Action.DISCOVERY, Phase2Action.VERIFICATION} and view.state != "active":
             raise Phase2ActivationUnavailable("Phase II provider access is unavailable.")
         return view
 

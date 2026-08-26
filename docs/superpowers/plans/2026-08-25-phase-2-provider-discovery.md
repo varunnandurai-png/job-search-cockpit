@@ -283,7 +283,7 @@ Expected: at most five records per Apify Actor and one JSearch response are stor
 
 **Produces:** `VerifiedJobAuthorizationService.verify()` and a runtime-only `VerifiedJobPreparationPort` implementation that returns authorizations only for verified current revisions.
 
-- [ ] **Step 1: Write the failing no-authorization-without-verification test**
+- [x] **Step 1: Write the failing no-authorization-without-verification test**
 
 ```python
 def test_unverified_discovery_cannot_authorize_resume_preparation(
@@ -295,19 +295,19 @@ def test_unverified_discovery_cannot_authorize_resume_preparation(
         port.authorization_for_resume("unknown-job")
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/integration/test_phase2_live_discovery.py::test_unverified_discovery_cannot_authorize_resume_preparation -q`
 
 Expected: FAIL because the catalog-backed port does not exist.
 
-- [ ] **Step 3: Implement the explicit verification gate**
+- [x] **Step 3: Implement the explicit verification gate**
 
 `VerifyCandidateCommand` must require the exact job revision ID, selected eligible location path, actor label, reason, and the confirmation text `VERIFY JOB FOR PHASE II PREPARATION`. The service must revalidate the active Phase I snapshot and Phase II activation generation, reject stale observations, profile changes, unresolved eligibility, unknown mandatory conditions, or a missing selected path, and append a verification record rather than updating prior state.
 
 The produced `VerifiedJobPreparationAuthorization` must bind the catalog job/revision, authorization ID and nonce, expiry, selected location-path fingerprint, Phase I profile/readiness/authority fingerprints and generations, and Phase II activation/restore generations. Only this fully verified port may replace `VerifiedJobReadinessUnavailable` in runtime; if no current verification exists, it must return the identical unavailable error.
 
-- [ ] **Step 4: Run the focused static test**
+- [x] **Step 4: Run the focused static test**
 
 Run: `uv run pytest tests/integration/test_phase2_live_discovery.py::test_unverified_discovery_cannot_authorize_resume_preparation -q`
 
@@ -328,7 +328,7 @@ Use only a persisted listing from the user-authorized micro-run. Show its safe p
 
 **Produces:** an authenticated read-only discovery status view and explicit verification action boundary. The existing finalisation control remains disabled without authorization.
 
-- [ ] **Step 1: Write the failing read-only route test**
+- [x] **Step 1: Write the failing read-only route test**
 
 ```python
 def test_review_page_shows_discovery_unavailable_without_a_verified_job(client) -> None:
@@ -339,23 +339,23 @@ def test_review_page_shows_discovery_unavailable_without_a_verified_job(client) 
     assert "Submit application" not in response.text
 ```
 
-- [ ] **Step 2: Run the route test to verify it fails only if the safe status projection is absent**
+- [x] **Step 2: Run the route test to verify it fails only if the safe status projection is absent**
 
 Run: `uv run pytest tests/integration/test_phase2_activation_page.py::test_review_page_shows_discovery_unavailable_without_a_verified_job -q`
 
 Expected: PASS initially or fail only after the route contract changes; do not alter the unavailable copy merely to force a red test.
 
-- [ ] **Step 3: Implement safe status display and CSRF verification action**
+- [x] **Step 3: Implement safe status display and CSRF verification action**
 
 Display provider configuration status, last manual-run counts, and candidate/verification state through a service projection. Do not display credentials, full raw provider payloads, or provider request URLs containing query tokens. Add no provider-search POST route. The only state-changing route is candidate verification, protected by the existing local session and CSRF token; it can authorize neither an application submission nor document finalisation by itself.
 
-- [ ] **Step 4: Run focused route and safety checks**
+- [x] **Step 4: Run focused route and safety checks**
 
 Run: `uv run pytest tests/integration/test_phase2_activation_page.py tests/integration/test_phase2_resume_runtime.py -q`
 
 Expected: PASS; no route can submit an application or call a provider automatically.
 
-- [ ] **Step 5: Run milestone verification**
+- [x] **Step 5: Run milestone verification**
 
 Run: `uv run ruff check src tests && uv run mypy src && git diff --check && uv run pytest -q`
 

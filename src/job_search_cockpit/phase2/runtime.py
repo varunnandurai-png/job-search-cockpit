@@ -15,7 +15,10 @@ from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2Mutatio
 from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationAttemptStore,
     ResumePreparationService,
-    VerifiedJobReadinessUnavailable,
+)
+from job_search_cockpit.phase2.verification import (
+    CatalogVerifiedJobPreparationPort,
+    VerifiedJobAuthorizationService,
 )
 from job_search_cockpit.ports import Phase1MatchingPort
 
@@ -26,6 +29,7 @@ class Phase2Runtime:
     instance_lock: Phase2InstanceLock
     activation_service: Phase2ActivationService
     discovery_service: DiscoveryService
+    verified_job_authorization_service: VerifiedJobAuthorizationService
     resume_preparation_service: ResumePreparationService
     reusable_answer_service: ReusableAnswerService
     application_draft_service: ApplicationDraftService
@@ -41,8 +45,13 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
     engine = create_phase2_engine(phase2_settings)
     instance_lock = Phase2InstanceLock.acquire(phase2_settings)
     coordinator = Phase2MutationCoordinator(phase2_settings, engine, instance_lock)
-    preparation_port = VerifiedJobReadinessUnavailable()
     activation_service = Phase2ActivationService(phase1_port, coordinator)
+    preparation_port = CatalogVerifiedJobPreparationPort(
+        phase1_port, activation_service, coordinator
+    )
+    verification_service = VerifiedJobAuthorizationService(
+        phase1_port, activation_service, coordinator
+    )
     return Phase2Runtime(
         coordinator=coordinator,
         instance_lock=instance_lock,
@@ -54,6 +63,7 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
             coordinator,
             dotenv_path=settings.source_root / ".env",
         ),
+        verified_job_authorization_service=verification_service,
         resume_preparation_service=ResumePreparationService(
             preparation_port, ResumePreparationAttemptStore(coordinator)
         ),

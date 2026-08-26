@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Protocol
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from job_search_cockpit.phase1_contract.snapshots import (
@@ -23,10 +24,15 @@ from job_search_cockpit.phase2.models import (
     Phase2DiscoveryRun,
     Phase2JobRecord,
     Phase2JobRevision,
+    Phase2JobVerification,
     Phase2SourceListingObservation,
 )
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
-from job_search_cockpit.phase2.provider_config import ProviderCredentials, ProviderLimits
+from job_search_cockpit.phase2.provider_config import (
+    ProviderConfigurationError,
+    ProviderCredentials,
+    ProviderLimits,
+)
 from job_search_cockpit.phase2.providers import (
     APIFY_GLASSDOOR_ACTOR,
     APIFY_LINKEDIN_ACTOR,
@@ -54,6 +60,15 @@ class DiscoveryResult:
     provider_counts: dict[str, int]
     observation_count: int
     revision_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryStatusView:
+    provider_configuration_available: bool
+    last_run_at: datetime | None
+    last_run_counts: dict[str, int]
+    candidate_count: int
+    verification_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +113,41 @@ class DiscoveryService:
             listing_limit=None,
             charge_limit=ProviderLimits().max_apify_charge_usd,
         )
+
+    def status_view(self) -> DiscoveryStatusView:
+        configured = self._provider_configuration_available()
+        if self.coordinator is None:
+            return DiscoveryStatusView(configured, None, {}, 0, 0)
+        with self.coordinator._session_factory() as session:
+            run = session.scalar(
+                select(Phase2DiscoveryRun).order_by(
+                    Phase2DiscoveryRun.created_at.desc(), Phase2DiscoveryRun.id.desc()
+                )
+            )
+            counts = (
+                {
+                    provider_id: int(count)
+                    for provider_id, count in session.execute(
+                        select(
+                            Phase2SourceListingObservation.provider_id,
+                            func.count(Phase2SourceListingObservation.id),
+                        )
+                        .where(Phase2SourceListingObservation.discovery_run_id == run.id)
+                        .group_by(Phase2SourceListingObservation.provider_id)
+                    )
+                }
+                if run is not None
+                else {}
+            )
+            return DiscoveryStatusView(
+                provider_configuration_available=configured,
+                last_run_at=run.created_at if run is not None else None,
+                last_run_counts=counts,
+                candidate_count=int(session.scalar(select(func.count(Phase2JobRecord.id))) or 0),
+                verification_count=int(
+                    session.scalar(select(func.count(Phase2JobVerification.id))) or 0
+                ),
+            )
 
     def _run(self, listing_limit: int | None, charge_limit: Decimal) -> DiscoveryResult:
         self._require_available()
@@ -149,6 +199,15 @@ class DiscoveryService:
     def _require_available(self) -> None:
         if self.activation_service is None or self.phase1_port is None or self.coordinator is None:
             raise Phase2ActivationUnavailable("Phase II provider access is unavailable.")
+
+    def _provider_configuration_available(self) -> bool:
+        try:
+            if self.credentials is not None:
+                return True
+            ProviderCredentials.from_environment({}, dotenv_path=self.dotenv_path)
+        except ProviderConfigurationError:
+            return False
+        return True
 
     def _plans(
         self,
@@ -304,4 +363,4 @@ def _counts(observations: list[tuple[str, ProviderListing]]) -> dict[str, int]:
     return counts
 
 
-__all__ = ["DiscoveryResult", "DiscoveryService"]
+__all__ = ["DiscoveryResult", "DiscoveryService", "DiscoveryStatusView"]

@@ -7,6 +7,7 @@ class Phase2Action(StrEnum):
     PROVIDER = "provider"
     MANUAL_URL = "manual_url"
     DISCOVERY = "discovery"
+    VERIFICATION = "verification"
     SCORING = "scoring"
     PUBLICATION = "publication"
     HANDOFF = "handoff"

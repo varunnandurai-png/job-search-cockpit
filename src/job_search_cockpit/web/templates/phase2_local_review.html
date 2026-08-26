@@ -5,6 +5,27 @@
   <h1>Résumé finalisation review</h1>
   <p>Verified job readiness is unavailable. No job has been authorised for preparation.</p>
 
+  <section aria-labelledby="discovery-status">
+    <h2 id="discovery-status">Provider discovery</h2>
+    {% if discovery_status and discovery_status.provider_configuration_available %}
+      <p>Provider configuration is available locally. Discovery remains manual.</p>
+    {% else %}
+      <p>Provider configuration is unavailable. No provider request can be started here.</p>
+    {% endif %}
+    {% if discovery_status and discovery_status.last_run_at %}
+      <p>Last manual run recorded. Public observations: {{ discovery_status.last_run_counts.values() | sum }}.</p>
+    {% else %}
+      <p>No manual provider run has been recorded.</p>
+    {% endif %}
+    <p>Candidates: {{ discovery_status.candidate_count if discovery_status else 0 }}. Verifications: {{ discovery_status.verification_count if discovery_status else 0 }}.</p>
+  </section>
+
+  <section aria-labelledby="verification-action">
+    <h2 id="verification-action">Candidate verification</h2>
+    <p>A candidate must be selected and explicitly verified before preparation becomes available.</p>
+    <button type="button" disabled>Verify selected candidate</button>
+  </section>
+
   <section aria-labelledby="eligibility-status">
     <h2 id="eligibility-status">Eligibility</h2>
     <p>Unavailable until a future verified discovery system supplies a job-specific authorization.</p>
