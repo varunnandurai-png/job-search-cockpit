@@ -1,4 +1,30 @@
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class GateResult(StrEnum):
+    PASS = "pass"
+    FAIL = "fail"
+    UNKNOWN = "unknown"
+
+
+class RequirementKind(StrEnum):
+    REQUIRED = "required"
+    MATERIAL_RESPONSIBILITY = "material_responsibility"
+    PREFERRED = "preferred"
+
+
+class EvidenceRelation(StrEnum):
+    DIRECT = "direct"
+    ADJACENT = "adjacent"
+    NONE = "none"
+
+
+class ConfidenceState(StrEnum):
+    HIGH = "high"
+    MODERATE = "moderate"
+    LOW = "low"
+    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,6 +1,12 @@
 import pytest
 
-from job_search_cockpit.phase2.assessment_types import MatchScoreComponents
+from job_search_cockpit.phase2.assessment_types import (
+    ConfidenceState,
+    EvidenceRelation,
+    GateResult,
+    MatchScoreComponents,
+    RequirementKind,
+)
 
 
 def test_match_score_components_total_the_approved_maximum() -> None:
@@ -28,3 +34,10 @@ def test_match_score_components_reject_a_component_above_its_approved_maximum() 
             seniority=10,
             evidence=5,
         )
+
+
+def test_assessment_states_are_bounded_to_the_approved_vocabulary() -> None:
+    assert GateResult.PASS.value == "pass"
+    assert RequirementKind.REQUIRED.value == "required"
+    assert EvidenceRelation.ADJACENT.value == "adjacent"
+    assert ConfidenceState.BLOCKED.value == "blocked"
