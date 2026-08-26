@@ -12,3 +12,14 @@ def test_focused_shortlist_is_capped_and_deterministically_orders_by_score_then_
     assert len(shortlist) == 20
     assert shortlist[0].assessment_id == "assessment-00"
     assert shortlist[-1].assessment_id == "assessment-19"
+
+
+def test_focused_shortlist_rejects_a_high_score_with_an_unresolved_hard_gate() -> None:
+    shortlist = focused_shortlist(
+        (
+            ShortlistCandidate("blocked", 95, hard_gates_pass=False),
+            ShortlistCandidate("qualified", 70),
+        )
+    )
+
+    assert tuple(candidate.assessment_id for candidate in shortlist) == ("qualified",)
