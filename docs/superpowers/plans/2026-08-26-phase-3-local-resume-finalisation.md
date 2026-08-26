@@ -6,7 +6,7 @@
 
 **Architecture:** `LocalResumeFinalisationService` consumes job authority only through `VerifiedJobPreparationPort` and career evidence only through `Phase1MatchingPort`. It stores append-only attempt, event, and final-artifact metadata in the isolated Phase II catalog, rebuilds the canonical model in memory from canonical requirement IDs at every sensitive boundary, renders both formats into a private temporary directory, verifies readable equivalent content, revalidates bound state again, and then publishes one pair with cleanup on every failure. Current provider-discovery records have no requirement ledger, so the production path must deny them until an independently approved Phase II ledger producer exists; Phase III must not infer IDs from listing prose or implement the deferred scoring system.
 
-**Tech Stack:** Python 3.12, SQLAlchemy 2, Alembic, FastAPI, Jinja2, SQLite, SHA-256, `python-docx`, ReportLab, and pypdf. The three proposed rendering dependencies remain gated on explicit user approval before `pyproject.toml` or `uv.lock` changes.
+**Tech Stack:** Python 3.12, SQLAlchemy 2, Alembic, FastAPI, Jinja2, SQLite, SHA-256, `python-docx`, ReportLab, and pypdf. Varun approved the three local rendering dependencies on 2026-08-26.
 
 ## Global Constraints
 
@@ -22,11 +22,11 @@
 - Generate both formats from one frozen canonical model and require readable, normalized content equivalence before success.
 - Use synthetic facts and temporary directories only in automated tests; do not contact providers or inspect real career facts.
 - No provider search, browser automation, application submission, upload, sharing, Drive access, scheduler, retry loop, or background task may be added.
-- Output directory proposal: `Settings.data_dir / "final-resumes"`; this remains gated on explicit approval because no current final-file directory exists.
-- Filename proposal: `tailored-resume-{attempt_id}.docx` and `tailored-resume-{attempt_id}.pdf`; filenames contain no employer, title, candidate, or provider data.
-- Exact confirmation proposal: `FINALISE RESUME FOR THIS VERIFIED JOB`.
-- Document-template proposal: one restrained single-column local resume layout with an unbranded heading and evidence bullets only; no new profile fields, manual wording, cover letter, or template picker is added. This remains gated on explicit user approval.
-- Rendering proposal: `python-docx>=1.2,<2` (MIT), `reportlab>=4.4,<5` (BSD), and `pypdf>=6.10,<7` (BSD-3-Clause). All are pure Python wheels; ReportLab may install Pillow as a transitive dependency. LibreOffice and Poppler from the bundled workspace runtime are QA tools, not application runtime dependencies.
+- Output directory: `Settings.data_dir / "final-resumes"`; approved for Phase III local-only storage.
+- Filename: `Varun_Resume_<company_name>.docx` and `Varun_Resume_<company_name>.pdf`; safely normalize the public company name for filesystem use.
+- Exact confirmation: `FINALISE RESUME FOR THIS VERIFIED JOB`.
+- Document presentation: approved classic-executive design: navy header, restrained gold accent, professional headshot, formal hierarchy, and tables only where they improve scanning. Follow `docs/superpowers/specs/2026-08-26-phase-3-resume-presentation-design.md`. No new factual profile fields, manual wording, cover letter, or template picker is added.
+- Rendering dependencies: `python-docx>=1.2,<2` (MIT), `reportlab>=4.4,<5` (BSD), and `pypdf>=6.10,<7` (BSD-3-Clause). All are pure Python wheels; ReportLab may install Pillow as a transitive dependency. LibreOffice and Poppler from the bundled workspace runtime are QA tools, not application runtime dependencies.
 - Commit and push every accepted task as one logical increment on `Dev`; after each push compare `git rev-parse HEAD` with `git ls-remote origin refs/heads/Dev`.
 
 ## Reconciliation Findings and Execution Gates
@@ -37,7 +37,7 @@
 4. No PDF or DOCX runtime renderer is declared in `pyproject.toml` or `uv.lock`.
 5. The bundled QA runtime contains `python-docx 1.2.0`, `reportlab 4.4.9`, `pypdf 6.10.0`, `pdfplumber 0.11.9`, LibreOffice/`soffice`, Poppler `pdftoppm`, and `pdfinfo`.
 6. The approved Phase III design assumes an existing per-job canonical requirement ledger. Current Phase II discovery stores listing prose but no atomic requirement IDs, coverage ledger, or ledger fingerprint. Phase III therefore consumes a ledger when available and denies its absence. Producing that ledger remains part of the deferred broader Phase II assessment system and is not added here.
-7. Explicit user approval is required before Task 1 because it changes rendering dependencies. Approval is also required for the proposed output directory and first resume template.
+7. Explicit user approval is required before Task 1 because it changes rendering dependencies. The local output directory and visual presentation are approved; Google Drive remains future scope.
 8. Real-user acceptance remains blocked after automated implementation/QA until a separately approved Phase II requirement-ledger producer exists and a fresh candidate is verified. This does not block synthetic implementation or document QA.
 
 ---
@@ -388,9 +388,9 @@ Use `tmp_path` and synthetic entries only. Assert both files are readable, norma
 
 Run: `UV_CACHE_DIR=/private/tmp/job-search-cockpit-uv-cache uv run pytest tests/document/test_phase3_rendering.py tests/unit/test_resume_documents.py -q`
 
-- [ ] **Step 3: Implement the approved single-column renderers**
+- [ ] **Step 3: Implement the approved classic-executive renderers**
 
-Apply one explicit token map in both formats: US Letter, 0.7-inch margins, Arial/Helvetica-compatible type, 18-point title, 11-point section heading, 10.5-point body, 1.15 line spacing, black text, and no tables, graphics, color accents, headers, footers, or provider/job prose. DOCX uses real paragraph styles and real bullet numbering. PDF uses ReportLab Platypus paragraphs and bullets. Neither renderer mutates or reorders the canonical model.
+Apply one explicit token map in both formats: US Letter, 0.7-inch margins, navy header, restrained gold accent rule, accessible black body text, 18-point title, 11-point section heading, 10.5-point body, and 1.15 line spacing. Use the user-supplied professional headshot only at real finalisation; tests use a synthetic placeholder and retain neither image nor image metadata. DOCX uses real paragraph styles, real bullet numbering, and explicit table geometry where a skills/qualifications table improves scanning. PDF uses matching ReportLab Platypus elements. Neither renderer mutates or reorders the canonical model.
 
 - [ ] **Step 4: Implement structural and equivalence verification**
 
