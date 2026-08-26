@@ -62,9 +62,13 @@ Use the **classic executive** direction:
 
 ## Filename and storage decisions
 
-- Final filenames are `Varun_Resume_<company_name>.docx` and
-  `Varun_Resume_<company_name>.pdf`, with company names safely normalized for
-  filesystem use.
+- The first final pair for a company is `Varun_Resume_<company_name>.docx`
+  and `Varun_Resume_<company_name>.pdf`, with company names safely normalized
+  for filesystem use.
+- A later final pair for another role at the same company is
+  `<role_name>_Varun_Resume_<company_name>.docx` and
+  `<role_name>_Varun_Resume_<company_name>.pdf`, with both public values safely
+  normalized for filesystem use. The service never overwrites an existing pair.
 - Phase III saves final files only to the private local Job Search Cockpit
   output directory. Google Drive is a separate future phase and is not
   accessed here.

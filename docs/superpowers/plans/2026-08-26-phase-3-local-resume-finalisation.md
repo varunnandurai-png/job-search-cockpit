@@ -23,7 +23,7 @@
 - Use synthetic facts and temporary directories only in automated tests; do not contact providers or inspect real career facts.
 - No provider search, browser automation, application submission, upload, sharing, Drive access, scheduler, retry loop, or background task may be added.
 - Output directory: `Settings.data_dir / "final-resumes"`; approved for Phase III local-only storage.
-- Filename: `Varun_Resume_<company_name>.docx` and `Varun_Resume_<company_name>.pdf`; safely normalize the public company name for filesystem use.
+- Filename: first final pair uses `Varun_Resume_<company_name>.docx` and `Varun_Resume_<company_name>.pdf`; a later role at the same company uses `<role_name>_Varun_Resume_<company_name>.<ext>`. Safely normalize public company and role names, and never overwrite an existing pair.
 - Exact confirmation: `FINALISE RESUME FOR THIS VERIFIED JOB`.
 - Document presentation: approved classic-executive design: navy header, restrained gold accent, professional headshot, formal hierarchy, and tables only where they improve scanning. Follow `docs/superpowers/specs/2026-08-26-phase-3-resume-presentation-design.md`. No new factual profile fields, manual wording, cover letter, or template picker is added.
 - Rendering dependencies: `python-docx>=1.2,<2` (MIT), `reportlab>=4.4,<5` (BSD), and `pypdf>=6.10,<7` (BSD-3-Clause). All are pure Python wheels; ReportLab may install Pillow as a transitive dependency. LibreOffice and Poppler from the bundled workspace runtime are QA tools, not application runtime dependencies.
