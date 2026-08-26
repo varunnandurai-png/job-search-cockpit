@@ -5,9 +5,12 @@ from job_search_cockpit.phase2.assessment import (
     AssessmentEvidenceService,
     AssessmentUnavailable,
     ComponentContribution,
+    ComponentRequirement,
     calculate_component_score,
+    component_anchor,
 )
 from job_search_cockpit.phase2.assessment_types import (
+    ComponentAnchor,
     ConfidenceState,
     EvidenceRelation,
     GateResult,
@@ -61,6 +64,27 @@ def test_component_score_caps_duplicate_evidence_at_its_fixed_maximum() -> None:
     )
 
     assert score == 20
+
+
+def test_component_anchor_requires_two_direct_requirements_for_close() -> None:
+    anchor = component_anchor(
+        (
+            ComponentRequirement("role.one", RequirementKind.REQUIRED, EvidenceRelation.DIRECT),
+            ComponentRequirement(
+                "role.two", RequirementKind.MATERIAL_RESPONSIBILITY, EvidenceRelation.DIRECT
+            ),
+        )
+    )
+
+    assert anchor is ComponentAnchor.CLOSE
+
+
+def test_single_direct_requirement_is_capped_at_strong() -> None:
+    anchor = component_anchor(
+        (ComponentRequirement("role.one", RequirementKind.REQUIRED, EvidenceRelation.DIRECT),)
+    )
+
+    assert anchor is ComponentAnchor.STRONG
 
 
 def test_evidence_service_blocks_a_projection_with_an_unmet_requirement() -> None:

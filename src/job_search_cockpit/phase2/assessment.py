@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 
 from job_search_cockpit.phase1_contract.snapshots import Phase1ResumeFactProjectionRequest
-from job_search_cockpit.phase2.assessment_types import EvidenceRelation
+from job_search_cockpit.phase2.assessment_types import (
+    ComponentAnchor,
+    EvidenceRelation,
+    RequirementKind,
+)
 from job_search_cockpit.phase2.requirements import build_requirement_ledger
 from job_search_cockpit.ports import Phase1MatchingPort
 
@@ -35,6 +39,52 @@ class ComponentContribution:
             raise ValueError("requirement ID is required")
         if self.points < 0:
             raise ValueError("contribution points must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentRequirement:
+    requirement_id: str
+    kind: RequirementKind
+    relation: EvidenceRelation
+
+
+def component_anchor(requirements: tuple[ComponentRequirement, ...]) -> ComponentAnchor:
+    if not requirements:
+        return ComponentAnchor.NONE
+    weights = {
+        RequirementKind.REQUIRED: 3,
+        RequirementKind.MATERIAL_RESPONSIBILITY: 2,
+        RequirementKind.PREFERRED: 1,
+    }
+    total = sum(weights[requirement.kind] for requirement in requirements)
+    contribution = sum(
+        weights[requirement.kind]
+        for requirement in requirements
+        if requirement.relation is EvidenceRelation.DIRECT
+    ) + sum(
+        weights[requirement.kind]
+        for requirement in requirements
+        if requirement.relation is EvidenceRelation.ADJACENT
+    ) / 2
+    coverage = contribution / total
+    if coverage == 0:
+        return ComponentAnchor.NONE
+    if coverage < 0.35:
+        return ComponentAnchor.ADJACENT
+    if coverage < 0.65:
+        return ComponentAnchor.PARTIAL
+    if coverage < 0.85:
+        return ComponentAnchor.STRONG
+    direct_count = sum(
+        requirement.relation is EvidenceRelation.DIRECT for requirement in requirements
+    )
+    if direct_count >= 2 and not any(
+        requirement.kind is RequirementKind.REQUIRED
+        and requirement.relation is EvidenceRelation.NONE
+        for requirement in requirements
+    ):
+        return ComponentAnchor.CLOSE
+    return ComponentAnchor.STRONG
 
 
 def calculate_component_score(

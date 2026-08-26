@@ -27,6 +27,14 @@ class ConfidenceState(StrEnum):
     BLOCKED = "blocked"
 
 
+class ComponentAnchor(StrEnum):
+    NONE = "none"
+    ADJACENT = "adjacent"
+    PARTIAL = "partial"
+    STRONG = "strong"
+    CLOSE = "close"
+
+
 @dataclass(frozen=True, slots=True)
 class MatchScoreComponents:
     """The fixed seven-component Phase II match-score breakdown."""
