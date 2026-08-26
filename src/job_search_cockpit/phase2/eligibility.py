@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from job_search_cockpit.phase2.assessment_types import GateResult
+from job_search_cockpit.search_profile.catalog import SearchProfilePayload
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +12,15 @@ class LocationGateInput:
     def __post_init__(self) -> None:
         if not self.location_id.strip():
             raise ValueError("location ID is required")
+
+
+@dataclass(frozen=True, slots=True)
+class JobGateInput:
+    employer_name: str
+
+    def __post_init__(self) -> None:
+        if not self.employer_name.strip():
+            raise ValueError("employer name is required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,3 +38,13 @@ def aggregate_location_paths(paths: tuple[LocationGateInput, ...]) -> LocationPa
     if any(path.result is GateResult.UNKNOWN for path in paths):
         return LocationPathResult(GateResult.UNKNOWN, ())
     return LocationPathResult(GateResult.FAIL, ())
+
+
+def evaluate_excluded_employer(
+    profile: SearchProfilePayload, job: JobGateInput
+) -> GateResult:
+    normalized_employer = "".join(job.employer_name.casefold().split())
+    for excluded_employer in profile.excluded_employers:
+        if "".join(excluded_employer.casefold().split()) in normalized_employer:
+            return GateResult.FAIL
+    return GateResult.PASS
