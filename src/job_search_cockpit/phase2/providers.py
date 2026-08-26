@@ -45,7 +45,7 @@ class _PreparedProviderRequest:
 
 def create_provider_http_client() -> httpx.Client:
     return httpx.Client(
-        timeout=httpx.Timeout(30.0, connect=10.0),
+        timeout=httpx.Timeout(90.0, connect=10.0),
         follow_redirects=False,
         transport=httpx.HTTPTransport(retries=0),
     )
@@ -235,7 +235,7 @@ def _require_bounded_client(client: httpx.Client) -> None:
     if (
         client.follow_redirects
         or client.timeout.connect != 10.0
-        or client.timeout.read != 30.0
+        or client.timeout.read != 90.0
     ):
         raise ValueError("provider HTTP client is not configured safely")
 

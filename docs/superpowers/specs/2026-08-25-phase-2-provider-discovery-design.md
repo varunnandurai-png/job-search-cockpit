@@ -68,7 +68,8 @@ candidate assessment or authorization rather than being rewritten in place.
   real-data micro-run: at most five listings from each selected Apify Actor,
   a US$0.10 per-Actor limit when supported, and one JSearch request. Returned
   public listings are production catalog records, never test fixtures.
-- Provider adapters have strict timeouts, fixed request/listing limits, and
+- Provider adapters use a 10-second connect timeout and a 90-second read timeout
+  to accommodate the selected Naukri Actor, with fixed request/listing limits and
   sanitized error reporting. They make no retry, polling, webhook, or browser
   automation behavior.
 - Static tests prove that unavailable configuration and Phase I snapshots block

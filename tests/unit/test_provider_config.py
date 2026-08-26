@@ -93,7 +93,7 @@ def test_apify_provider_rejects_an_unapproved_actor() -> None:
 def test_provider_http_client_uses_fixed_timeouts_and_disables_redirects() -> None:
     with create_provider_http_client() as client:
         assert client.timeout.connect == 10.0
-        assert client.timeout.read == 30.0
+        assert client.timeout.read == 90.0
         assert client.follow_redirects is False
 
 

@@ -191,7 +191,7 @@ Expected: FAIL because `ProviderRequest` does not yet validate limits.
 
 - [x] **Step 3: Implement adapters with exact transport constraints**
 
-Promote `httpx` from the development group to runtime dependencies. Use a single `httpx.Client` per manual run with `follow_redirects=False`, a 10-second connect timeout, a 30-second read timeout, and no retry wrapper.
+Promote `httpx` from the development group to runtime dependencies. Use a single `httpx.Client` per manual run with `follow_redirects=False`, a 10-second connect timeout, a 90-second read timeout (to accommodate the selected Naukri Actor), and no retry wrapper.
 
 `ApifyProvider.fetch()` must call the documented Actor-run endpoint only for these fixed Actor IDs:
 
