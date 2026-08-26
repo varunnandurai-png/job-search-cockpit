@@ -87,6 +87,28 @@ def component_anchor(requirements: tuple[ComponentRequirement, ...]) -> Componen
     return ComponentAnchor.STRONG
 
 
+def anchor_points(maximum: int, anchor: ComponentAnchor) -> int:
+    anchors = {
+        20: (0, 5, 10, 15, 20),
+        15: (0, 4, 8, 12, 15),
+        10: (0, 3, 5, 8, 10),
+        5: (0, 1, 3, 4, 5),
+    }
+    try:
+        values = anchors[maximum]
+    except KeyError as error:
+        raise ValueError("component maximum has no approved anchors") from error
+    return values[
+        {
+            ComponentAnchor.NONE: 0,
+            ComponentAnchor.ADJACENT: 1,
+            ComponentAnchor.PARTIAL: 2,
+            ComponentAnchor.STRONG: 3,
+            ComponentAnchor.CLOSE: 4,
+        }[anchor]
+    ]
+
+
 def calculate_component_score(
     maximum: int, contributions: tuple[ComponentContribution, ...]
 ) -> int:

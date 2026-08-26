@@ -6,6 +6,7 @@ from job_search_cockpit.phase2.assessment import (
     AssessmentUnavailable,
     ComponentContribution,
     ComponentRequirement,
+    anchor_points,
     calculate_component_score,
     component_anchor,
 )
@@ -85,6 +86,13 @@ def test_single_direct_requirement_is_capped_at_strong() -> None:
     )
 
     assert anchor is ComponentAnchor.STRONG
+
+
+def test_anchor_points_use_only_the_approved_discrete_values() -> None:
+    assert anchor_points(20, ComponentAnchor.STRONG) == 15
+    assert anchor_points(15, ComponentAnchor.PARTIAL) == 8
+    assert anchor_points(10, ComponentAnchor.ADJACENT) == 3
+    assert anchor_points(5, ComponentAnchor.CLOSE) == 5
 
 
 def test_evidence_service_blocks_a_projection_with_an_unmet_requirement() -> None:
