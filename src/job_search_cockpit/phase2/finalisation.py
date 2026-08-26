@@ -127,6 +127,8 @@ class LocalResumeFinalisationService:
             raise FinalisationError("Approved résumé facts changed before review.")
         self._validate_projection_binding(authorization, projection)
         document = build_canonical_resume_document(projection)
+        if self._preparation_port.revalidate_resume_authorization(authorization) != authorization:
+            raise FinalisationError("The verified job authorization changed.")
         attempt_id = self._record_attempt(authorization, projection.fingerprint, document.content_fingerprint)
         return self.review_for(attempt_id)
 
@@ -322,6 +324,35 @@ class LocalResumeFinalisationService:
     def _validate_authorization(
         authorization: VerifiedJobPreparationAuthorization,
     ) -> None:
+        required_values = (
+            authorization.job_id,
+            authorization.job_revision_id,
+            authorization.selected_location_path_fingerprint,
+            authorization.authorization_id,
+            authorization.authorization_nonce,
+            authorization.company_name,
+            authorization.role_name,
+        )
+        fingerprints = (
+            authorization.selected_location_path_fingerprint,
+            authorization.phase1_profile_fingerprint,
+            authorization.phase1_readiness_fingerprint,
+            authorization.phase1_authority_fingerprint,
+        )
+        generations = (
+            authorization.phase1_profile_generation,
+            authorization.phase1_readiness_generation,
+            authorization.phase1_authority_generation,
+            authorization.phase1_restore_generation,
+            authorization.phase2_activation_generation,
+            authorization.phase2_restore_generation,
+        )
+        if (
+            any(not value.strip() for value in required_values)
+            or any(len(fingerprint) != 64 for fingerprint in fingerprints)
+            or any(generation < 0 for generation in generations)
+        ):
+            raise FinalisationError("The verified job authorization binding is incomplete.")
         if _as_utc(authorization.expires_at) <= datetime.now(UTC):
             raise FinalisationError("The verified job authorization has expired.")
         if authorization.eligibility != "eligible" or authorization.unknown_mandatory_rule_codes:

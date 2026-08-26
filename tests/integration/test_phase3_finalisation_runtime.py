@@ -156,6 +156,25 @@ def test_review_start_rejects_expired_authorization_without_metadata(
         runtime.close()
 
 
+def test_review_start_rejects_incomplete_authorization_binding_without_metadata(
+    tmp_path: Path,
+) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        current = runtime.preparation_port.authorizations["job-1"]
+        runtime.preparation_port.authorizations["job-1"] = replace(
+            current, authorization_nonce=""
+        )
+
+        with pytest.raises(FinalisationError, match="binding is incomplete"):
+            runtime.service.start_review("job-1")
+
+        assert _attempt_count(runtime) == 0
+        assert not (tmp_path / "data" / "final-resumes").exists()
+    finally:
+        runtime.close()
+
+
 def test_review_start_blocks_missing_approved_requirement_evidence(
     tmp_path: Path,
 ) -> None:
@@ -166,6 +185,38 @@ def test_review_start_blocks_missing_approved_requirement_evidence(
         )
 
         with pytest.raises(ValueError, match="needs approved evidence"):
+            runtime.service.start_review("job-1")
+
+        assert _attempt_count(runtime) == 0
+        assert not (tmp_path / "data" / "final-resumes").exists()
+    finally:
+        runtime.close()
+
+
+def test_review_start_revalidates_authorization_immediately_before_record(
+    tmp_path: Path,
+) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        original_port = runtime.preparation_port
+
+        class DriftBeforeRecord:
+            revalidation_count = 0
+
+            def authorization_for_resume(self, job_id: str):  # type: ignore[no-untyped-def]
+                return original_port.authorization_for_resume(job_id)
+
+            def revalidate_resume_authorization(
+                self, expected  # type: ignore[no-untyped-def]
+            ):
+                self.revalidation_count += 1
+                if self.revalidation_count == 1:
+                    return expected
+                return replace(expected, phase2_activation_generation=2)
+
+        runtime.service._preparation_port = DriftBeforeRecord()
+
+        with pytest.raises(FinalisationError, match="authorization changed"):
             runtime.service.start_review("job-1")
 
         assert _attempt_count(runtime) == 0
