@@ -4,6 +4,8 @@ from fractions import Fraction
 from job_search_cockpit.phase1_contract.service import Phase1ContractUnavailable
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
+    Phase1MatchingFactSetSnapshot,
+    Phase1MatchingRequirementQuery,
     Phase1ResumeFactProjectionRequest,
 )
 from job_search_cockpit.phase2.activation import Phase2ActivationService
@@ -95,6 +97,34 @@ class AssessmentEvidenceService:
             raise AssessmentUnavailable("Phase I evidence changed during assessment.")
         if not build_requirement_ledger(projection).drafting_allowed:
             raise AssessmentUnavailable("Assessment lacks approved evidence.")
+
+    def require_complete_matching_facts(
+        self, requirement_ids: tuple[str, ...]
+    ) -> Phase1MatchingFactSetSnapshot:
+        try:
+            snapshot = self._phase1_port.matching_fact_set(
+                Phase1MatchingRequirementQuery(requirement_ids=requirement_ids)
+            )
+            current = self._phase1_port.revalidate_matching_fact_set(snapshot)
+        except (Phase1ContractUnavailable, ValueError) as error:
+            raise AssessmentUnavailable("Assessment matching facts are unavailable.") from error
+        if current != snapshot:
+            raise AssessmentUnavailable("Assessment matching fact set changed.")
+        if snapshot.requirement_ids != requirement_ids or not snapshot.complete:
+            raise AssessmentUnavailable("Assessment matching fact set is incomplete.")
+        if any(
+            fact.requirement_id not in requirement_ids
+            or not all(
+                (
+                    fact.claim_id.strip(),
+                    fact.revision_id.strip(),
+                    fact.support_assertion_id.strip(),
+                )
+            )
+            for fact in snapshot.facts
+        ):
+            raise AssessmentUnavailable("Assessment matching fact set is malformed.")
+        return snapshot
 
 
 _LOW_CONFIDENCE_REASONS = frozenset(

@@ -1,6 +1,10 @@
 import pytest
 
-from job_search_cockpit.phase1_contract.snapshots import Phase1ResumeFactProjection
+from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1MatchingFactSetSnapshot,
+    Phase1MatchingFactSnapshot,
+    Phase1ResumeFactProjection,
+)
 from job_search_cockpit.phase2.assessment import (
     AssessmentEvidenceService,
     AssessmentUnavailable,
@@ -177,6 +181,32 @@ def test_evidence_service_blocks_a_projection_with_an_unmet_requirement() -> Non
         service.require_complete_evidence(("role.product",))
 
 
+def test_matching_fact_set_drift_blocks_scoring_evidence() -> None:
+    snapshot = Phase1MatchingFactSetSnapshot(
+        requirement_ids=("role.product",),
+        facts=(
+            Phase1MatchingFactSnapshot(
+                requirement_id="role.product",
+                claim_id="claim-1",
+                revision_id="revision-1",
+                support_assertion_id="support-1",
+            ),
+        ),
+        profile_fingerprint="a" * 64,
+        profile_generation=1,
+        readiness_fingerprint="b" * 64,
+        readiness_generation=1,
+        authority_fingerprint="c" * 64,
+        authority_generation=1,
+        restore_generation=0,
+        fingerprint="d" * 64,
+    )
+    service = AssessmentEvidenceService(_MatchingFactSetPort(snapshot))
+
+    with pytest.raises(AssessmentUnavailable, match="matching fact set changed"):
+        service.require_complete_matching_facts(("role.product",))
+
+
 class _ProjectionPort:
     def __init__(self, projection: Phase1ResumeFactProjection) -> None:
         self.projection = projection
@@ -188,3 +218,16 @@ class _ProjectionPort:
         self, _expected: Phase1ResumeFactProjection
     ) -> Phase1ResumeFactProjection:
         return self.projection
+
+
+class _MatchingFactSetPort:
+    def __init__(self, snapshot: Phase1MatchingFactSetSnapshot) -> None:
+        self.snapshot = snapshot
+
+    def matching_fact_set(self, _query: object) -> Phase1MatchingFactSetSnapshot:
+        return self.snapshot
+
+    def revalidate_matching_fact_set(
+        self, expected: Phase1MatchingFactSetSnapshot
+    ) -> Phase1MatchingFactSetSnapshot:
+        return expected.model_copy(update={"fingerprint": "e" * 64})
