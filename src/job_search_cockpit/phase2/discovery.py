@@ -14,7 +14,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
 )
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.config import Phase2Settings
-from job_search_cockpit.phase2.discovery_types import ProviderListing
+from job_search_cockpit.phase2.listing_types import ProviderListing
 from job_search_cockpit.phase2.models import (
     Phase2DiscoveryRun,
     Phase2JobRecord,
@@ -25,7 +25,6 @@ from job_search_cockpit.phase2.models import (
 )
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
 from job_search_cockpit.phase2.official_providers import OfficialProviderAdapterRegistry
-from job_search_cockpit.phase2.provider_config import ProviderConfigurationError
 from job_search_cockpit.phase2.provider_instances import (
     ApprovedProviderInstance,
     OfficialProviderKind,
@@ -33,6 +32,10 @@ from job_search_cockpit.phase2.provider_instances import (
 )
 from job_search_cockpit.phase2.types import Phase2Action, Phase2ActivationUnavailable
 from job_search_cockpit.ports import Phase1MatchingPort
+
+
+class DiscoveryUnavailable(ValueError):
+    """Raised when no approved official provider can be used."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +134,7 @@ class DiscoveryService:
         activation_service.revalidate_before(Phase2Action.DISCOVERY)
         expected_phase1 = phase1_port.activation_inputs()
         self._plans(expected_phase1)
-        raise ProviderConfigurationError(
+        raise DiscoveryUnavailable(
             "Official provider execution is unavailable until a named instance and parser are "
             "approved."
         )
@@ -143,14 +146,14 @@ class DiscoveryService:
     def _provider_configuration_available(self) -> bool:
         try:
             return bool(self._approved_instances())
-        except (ProviderConfigurationError, ProviderInstanceUnavailable):
+        except (DiscoveryUnavailable, ProviderInstanceUnavailable):
             return False
 
     def _plans(self, inputs: Phase1ActivationInputs) -> tuple[_OfficialProviderPlan, ...]:
         del inputs
         instances = self._approved_instances()
         if not instances:
-            raise ProviderConfigurationError("no approved official provider instances are enabled")
+            raise DiscoveryUnavailable("no approved official provider instances are enabled")
         plans: list[_OfficialProviderPlan] = []
         for instance in instances:
             self.adapter_registry.adapter_for(instance.kind)
@@ -197,7 +200,7 @@ def _approved_instance(approval: Phase2ProviderInstanceApproval) -> ApprovedProv
             source_identifier=approval.source_identifier,
         )
     except (TypeError, ValueError) as error:
-        raise ProviderConfigurationError(
+        raise DiscoveryUnavailable(
             "approved official provider metadata is invalid"
         ) from error
 

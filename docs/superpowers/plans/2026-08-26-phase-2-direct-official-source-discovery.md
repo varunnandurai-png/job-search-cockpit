@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- This plan supersedes the Apify/JSearch portions of `2026-08-25-phase-2-provider-discovery-design.md`; aggregator code stays unreachable until separately removed under an approved deprecation plan.
+- This plan supersedes the Apify/JSearch portions of `2026-08-25-phase-2-provider-discovery-design.md`; the separately approved deprecation removed all aggregator adapters, credential loading, request types, and tests.
 - Discover only real public listings from an explicitly approved exact employer/ATS instance. Do not fabricate listings, use saved response fixtures, write synthetic job-listing examples, scrape search engines, or call aggregators.
 - Do not make a network request, enable an instance, collect a listing, or perform a smoke check while implementing this plan. Such live access requires a later per-instance user approval.
 - Permit only `greenhouse_public_board`, `lever_public_board`, `official_page_read_only`, and `manual_official_url_read_only` adapter types; no provider type may be inferred from a URL.

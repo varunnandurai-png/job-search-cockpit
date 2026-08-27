@@ -2,7 +2,7 @@
 
 ## Status
 
-The earlier Apify/JSearch pilot is retired. Its aggregator adapters are unreachable and must not be configured, invoked, or re-enabled under this design.
+The earlier Apify/JSearch pilot is retired. Its aggregator adapters, credential loading, request types, and tests were removed and must not be reintroduced under this design.
 
 The implemented local-only foundation supports direct official sources only:
 

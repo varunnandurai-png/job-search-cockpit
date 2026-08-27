@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from job_search_cockpit.phase2.discovery_types import ProviderListing
+from job_search_cockpit.phase2.listing_types import ProviderListing
 from job_search_cockpit.phase2.provider_instances import (
     ApprovedProviderInstance,
     OfficialProviderKind,
