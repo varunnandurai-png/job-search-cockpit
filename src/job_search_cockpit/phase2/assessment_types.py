@@ -9,6 +9,12 @@ class GateResult(StrEnum):
     UNKNOWN = "unknown"
 
 
+class EligibilityState(StrEnum):
+    ELIGIBLE = "eligible"
+    INELIGIBLE = "ineligible"
+    NEEDS_CLARIFICATION = "needs_clarification"
+
+
 class RequirementKind(StrEnum):
     REQUIRED = "required"
     MATERIAL_RESPONSIBILITY = "material_responsibility"
@@ -52,6 +58,24 @@ class ScoringComponent(StrEnum):
     TECHNICAL = "technical"
     SENIORITY = "seniority"
     EVIDENCE = "evidence"
+
+
+@dataclass(frozen=True, slots=True)
+class LocationEligibilityPath:
+    """A single target-location result that cannot borrow another path's evidence."""
+
+    location_id: str
+    result: GateResult
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.location_id.strip():
+            raise ValueError("location ID is required")
+        if any(
+            re.fullmatch(r"[a-z][a-z0-9_/-]{0,119}", reason_code) is None
+            for reason_code in self.reason_codes
+        ):
+            raise ValueError("location reason codes must be bounded")
 
 
 @dataclass(frozen=True, slots=True)

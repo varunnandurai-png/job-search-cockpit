@@ -1,5 +1,10 @@
-from job_search_cockpit.phase2.assessment_types import GateResult
+from job_search_cockpit.phase2.assessment_types import (
+    EligibilityState,
+    GateResult,
+    LocationEligibilityPath,
+)
 from job_search_cockpit.phase2.eligibility import (
+    EligibilityAssessment,
     JobGateInput,
     LocationGateInput,
     aggregate_location_paths,
@@ -32,3 +37,16 @@ def test_excluded_employer_is_a_job_wide_failure() -> None:
     )
 
     assert result is GateResult.FAIL
+
+
+def test_unknown_global_hard_gate_blocks_shortlist_despite_a_passing_location_path() -> None:
+    assessment = EligibilityAssessment(
+        global_gate_results=(GateResult.PASS, GateResult.UNKNOWN),
+        location_paths=(
+            LocationEligibilityPath("bengaluru", GateResult.PASS, ("location_confirmed",)),
+            LocationEligibilityPath("singapore", GateResult.FAIL, ("sponsorship_unavailable",)),
+        ),
+    )
+
+    assert assessment.state is EligibilityState.NEEDS_CLARIFICATION
+    assert assessment.shortlist_allowed is False
