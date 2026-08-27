@@ -12,8 +12,10 @@ from job_search_cockpit.phase2.assessment import (
     ComponentRequirement,
     QualifiedBandInputs,
     ReadinessInputs,
+    ScoreRequirement,
     anchor_points,
     calculate_component_score,
+    calculate_match_score,
     component_anchor,
     qualified_match_band,
     ready_for_future_drafting,
@@ -120,6 +122,29 @@ def test_component_score_caps_duplicate_evidence_at_its_fixed_maximum() -> None:
     )
 
     assert score == 20
+
+
+def test_fixed_calculator_derives_component_points_from_locked_anchors() -> None:
+    components = calculate_match_score(
+        (
+            ScoreRequirement(
+                "role.one", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
+            ),
+            ScoreRequirement(
+                "role.two", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
+            ),
+            ScoreRequirement(
+                "responsibility.one",
+                RequirementKind.MATERIAL_RESPONSIBILITY,
+                ScoringComponent.RESPONSIBILITY,
+                EvidenceRelation.DIRECT,
+            ),
+        )
+    )
+
+    assert components.role == 20
+    assert components.responsibility == 15
+    assert components.total == 35
 
 
 def test_component_anchor_requires_two_direct_requirements_for_close() -> None:

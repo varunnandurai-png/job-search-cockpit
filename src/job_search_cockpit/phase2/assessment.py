@@ -13,8 +13,10 @@ from job_search_cockpit.phase2.assessment_types import (
     ComponentAnchor,
     ConfidenceState,
     EvidenceRelation,
+    MatchScoreComponents,
     QualifiedMatchBand,
     RequirementKind,
+    ScoringComponent,
 )
 from job_search_cockpit.phase2.requirements import build_requirement_ledger
 from job_search_cockpit.phase2.types import (
@@ -247,6 +249,18 @@ class ComponentRequirement:
     relation: EvidenceRelation
 
 
+@dataclass(frozen=True, slots=True)
+class ScoreRequirement:
+    requirement_id: str
+    kind: RequirementKind
+    component: ScoringComponent
+    relation: EvidenceRelation
+
+    def __post_init__(self) -> None:
+        if not self.requirement_id.strip():
+            raise ValueError("requirement ID is required")
+
+
 def component_anchor(requirements: tuple[ComponentRequirement, ...]) -> ComponentAnchor:
     if not requirements:
         return ComponentAnchor.NONE
@@ -307,6 +321,45 @@ def anchor_points(maximum: int, anchor: ComponentAnchor) -> int:
             ComponentAnchor.CLOSE: 4,
         }[anchor]
     ]
+
+
+def calculate_match_score(requirements: tuple[ScoreRequirement, ...]) -> MatchScoreComponents:
+    """Derive the seven fixed component scores from validated requirement relations."""
+    maxima = {
+        ScoringComponent.ROLE: 20,
+        ScoringComponent.DOMAIN: 20,
+        ScoringComponent.RESPONSIBILITY: 20,
+        ScoringComponent.TECHNICAL: 10,
+        ScoringComponent.OUTCOME: 15,
+        ScoringComponent.SENIORITY: 10,
+        ScoringComponent.EVIDENCE: 5,
+    }
+    points = {
+        component: anchor_points(
+            maximum,
+            component_anchor(
+                tuple(
+                    ComponentRequirement(
+                        requirement.requirement_id,
+                        requirement.kind,
+                        requirement.relation,
+                    )
+                    for requirement in requirements
+                    if requirement.component is component
+                )
+            ),
+        )
+        for component, maximum in maxima.items()
+    }
+    return MatchScoreComponents(
+        role=points[ScoringComponent.ROLE],
+        domain=points[ScoringComponent.DOMAIN],
+        responsibility=points[ScoringComponent.RESPONSIBILITY],
+        technical=points[ScoringComponent.TECHNICAL],
+        outcome=points[ScoringComponent.OUTCOME],
+        seniority=points[ScoringComponent.SENIORITY],
+        evidence=points[ScoringComponent.EVIDENCE],
+    )
 
 
 def calculate_component_score(
