@@ -181,10 +181,14 @@ class Phase2ActivationService:
             Phase2Action.ACTIVATION_VIEW,
             Phase2Action.DISCOVERY,
             Phase2Action.VERIFICATION,
+            Phase2Action.SCORING,
+            Phase2Action.PUBLICATION,
         }:
             raise Phase2ActivationUnavailable("This Phase II action is not implemented.")
         if action in {Phase2Action.DISCOVERY, Phase2Action.VERIFICATION} and view.state != "active":
             raise Phase2ActivationUnavailable("Phase II provider access is unavailable.")
+        if action in {Phase2Action.SCORING, Phase2Action.PUBLICATION} and view.state != "active":
+            raise Phase2ActivationUnavailable("Phase II scoring or publication is unavailable.")
         return view
 
     def restore(self, backup_id: str, actor: str, reason: str) -> Phase2ActivationView:

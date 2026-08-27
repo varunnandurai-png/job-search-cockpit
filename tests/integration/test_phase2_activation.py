@@ -106,9 +106,14 @@ def test_activation_suspends_when_phase1_inputs_change(phase2_settings: Phase2Se
         assert service.validate_current().state == "suspended"
 
 
-def test_all_future_live_actions_remain_denied(phase2_settings: Phase2Settings) -> None:
+def test_local_scoring_and_publication_revalidate_an_active_phase2_grant(
+    phase2_settings: Phase2Settings,
+) -> None:
     with _service(phase2_settings) as (service, _port):
+        with pytest.raises(Phase2ActivationUnavailable, match="scoring or publication"):
+            service.revalidate_before(Phase2Action.SCORING)
+
         service.activate(ActivationCommand(actor="Varun", confirmation="ENABLE PHASE II"))
 
-        with pytest.raises(Phase2ActivationUnavailable, match="not implemented"):
-            service.revalidate_before(Phase2Action.SCORING)
+        assert service.revalidate_before(Phase2Action.SCORING).state == "active"
+        assert service.revalidate_before(Phase2Action.PUBLICATION).state == "active"
