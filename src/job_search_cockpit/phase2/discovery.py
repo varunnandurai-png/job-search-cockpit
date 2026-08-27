@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
 from hashlib import sha256
-from pathlib import Path
-from typing import Protocol
 from uuid import uuid4
 
-import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -19,39 +14,25 @@ from job_search_cockpit.phase1_contract.snapshots import (
 )
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.config import Phase2Settings
-from job_search_cockpit.phase2.discovery_types import ProviderListing, ProviderRequest
+from job_search_cockpit.phase2.discovery_types import ProviderListing
 from job_search_cockpit.phase2.models import (
     Phase2DiscoveryRun,
     Phase2JobRecord,
     Phase2JobRevision,
     Phase2JobVerification,
+    Phase2ProviderInstanceApproval,
     Phase2SourceListingObservation,
 )
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
-from job_search_cockpit.phase2.provider_config import (
-    ProviderConfigurationError,
-    ProviderCredentials,
-    ProviderLimits,
-)
-from job_search_cockpit.phase2.providers import (
-    APIFY_GLASSDOOR_ACTOR,
-    APIFY_LINKEDIN_ACTOR,
-    APIFY_NAUKRI_ACTOR,
-    ApifyProvider,
-    JSearchProvider,
-    create_provider_http_client,
+from job_search_cockpit.phase2.official_providers import OfficialProviderAdapterRegistry
+from job_search_cockpit.phase2.provider_config import ProviderConfigurationError
+from job_search_cockpit.phase2.provider_instances import (
+    ApprovedProviderInstance,
+    OfficialProviderKind,
+    ProviderInstanceUnavailable,
 )
 from job_search_cockpit.phase2.types import Phase2Action, Phase2ActivationUnavailable
 from job_search_cockpit.ports import Phase1MatchingPort
-
-
-class ListingProvider(Protocol):
-    def fetch(
-        self,
-        request: ProviderRequest,
-        credentials: ProviderCredentials,
-        client: httpx.Client,
-    ) -> tuple[ProviderListing, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +53,9 @@ class DiscoveryStatusView:
 
 
 @dataclass(frozen=True, slots=True)
-class _ProviderPlan:
+class _OfficialProviderPlan:
     provider_id: str
-    request: ProviderRequest
-    provider: ListingProvider
+    instance: ApprovedProviderInstance
 
 
 class DiscoveryService:
@@ -85,34 +65,25 @@ class DiscoveryService:
         phase1_port: Phase1MatchingPort | None = None,
         activation_service: Phase2ActivationService | None = None,
         coordinator: Phase2MutationCoordinator | None = None,
-        *,
-        credentials: ProviderCredentials | None = None,
-        dotenv_path: Path | None = None,
-        client_factory: Callable[[], httpx.Client] = create_provider_http_client,
+        adapter_registry: OfficialProviderAdapterRegistry | None = None,
     ) -> None:
         self.settings = settings
         self.phase1_port = phase1_port
         self.activation_service = activation_service
         self.coordinator = coordinator
-        self.credentials = credentials
-        self.dotenv_path = dotenv_path
-        self._client_factory = client_factory
+        self.adapter_registry = (
+            adapter_registry or OfficialProviderAdapterRegistry.with_direct_source_adapters()
+        )
 
     @classmethod
     def unavailable_for_tests(cls, settings: Phase2Settings) -> DiscoveryService:
         return cls(settings)
 
     def run_micro_pilot(self) -> DiscoveryResult:
-        return self._run(
-            listing_limit=ProviderLimits().micro_listing_limit,
-            charge_limit=ProviderLimits().micro_apify_charge_usd,
-        )
+        return self._run()
 
     def run_weekly_pilot(self) -> DiscoveryResult:
-        return self._run(
-            listing_limit=None,
-            charge_limit=ProviderLimits().max_apify_charge_usd,
-        )
+        return self._run()
 
     def status_view(self) -> DiscoveryStatusView:
         configured = self._provider_configuration_available()
@@ -149,7 +120,7 @@ class DiscoveryService:
                 ),
             )
 
-    def _run(self, listing_limit: int | None, charge_limit: Decimal) -> DiscoveryResult:
+    def _run(self) -> DiscoveryResult:
         self._require_available()
         assert self.activation_service is not None
         assert self.phase1_port is not None
@@ -159,42 +130,11 @@ class DiscoveryService:
 
         activation_service.revalidate_before(Phase2Action.DISCOVERY)
         expected_phase1 = phase1_port.activation_inputs()
-        plans = self._plans(expected_phase1, listing_limit, charge_limit)
-        credentials = self.credentials or ProviderCredentials.from_environment(
-            dotenv_path=self.dotenv_path
+        self._plans(expected_phase1)
+        raise ProviderConfigurationError(
+            "Official provider execution is unavailable until a named instance and parser are "
+            "approved."
         )
-        observations: list[tuple[str, ProviderListing]] = []
-        with self._client_factory() as client:
-            for plan in plans:
-                activation_service.revalidate_before(Phase2Action.DISCOVERY)
-                listings = plan.provider.fetch(plan.request, credentials, client)
-                observations.extend((plan.provider_id, listing) for listing in listings)
-
-        def persist(session: Session) -> DiscoveryResult:
-            activation_service.revalidate_before(Phase2Action.DISCOVERY)
-            phase1_port.revalidate_activation_inputs(expected_phase1)
-            run = Phase2DiscoveryRun(
-                id=str(uuid4()),
-                **_phase1_run_fields(expected_phase1),
-                phase2_activation_generation=activation_service.activation_view().activation_generation,
-                phase2_restore_generation=activation_service.activation_view().restore_generation,
-            )
-            session.add(run)
-            session.flush()
-            observation_count = 0
-            revision_count = 0
-            for provider_id, listing in observations:
-                created, revision = _persist_listing(session, run.id, provider_id, listing)
-                observation_count += created
-                revision_count += revision
-            return DiscoveryResult(
-                discovery_run_id=run.id,
-                provider_counts=_counts(observations),
-                observation_count=observation_count,
-                revision_count=revision_count,
-            )
-
-        return self.coordinator.run(persist, "phase2_provider_discovery")
 
     def _require_available(self) -> None:
         if self.activation_service is None or self.phase1_port is None or self.coordinator is None:
@@ -202,69 +142,71 @@ class DiscoveryService:
 
     def _provider_configuration_available(self) -> bool:
         try:
-            if self.credentials is not None:
-                return True
-            ProviderCredentials.from_environment({}, dotenv_path=self.dotenv_path)
-        except ProviderConfigurationError:
+            return bool(self._approved_instances())
+        except (ProviderConfigurationError, ProviderInstanceUnavailable):
             return False
-        return True
 
-    def _plans(
-        self,
-        inputs: Phase1ActivationInputs,
-        listing_limit: int | None,
-        charge_limit: Decimal,
-    ) -> tuple[_ProviderPlan, ...]:
-        del inputs, listing_limit, charge_limit
+    def _plans(self, inputs: Phase1ActivationInputs) -> tuple[_OfficialProviderPlan, ...]:
+        del inputs
+        instances = self._approved_instances()
+        if not instances:
+            raise ProviderConfigurationError("no approved official provider instances are enabled")
+        plans: list[_OfficialProviderPlan] = []
+        for instance in instances:
+            self.adapter_registry.adapter_for(instance.kind)
+            plans.append(_OfficialProviderPlan(instance.instance_id, instance))
+        return tuple(plans)
+
+    def _approved_instances(self) -> tuple[ApprovedProviderInstance, ...]:
+        if self.coordinator is None or self.activation_service is None:
+            return ()
+        view = self.activation_service.activation_view()
+        with self.coordinator._session_factory() as session:
+            approvals = session.scalars(
+                select(Phase2ProviderInstanceApproval).order_by(
+                    Phase2ProviderInstanceApproval.created_at.desc(),
+                    Phase2ProviderInstanceApproval.id.desc(),
+                )
+            )
+            latest: dict[str, Phase2ProviderInstanceApproval] = {}
+            for approval in approvals:
+                latest.setdefault(approval.instance_id, approval)
+        return tuple(
+            _approved_instance(approval)
+            for _instance_id, approval in sorted(latest.items())
+            if approval.enabled
+            and approval.phase2_activation_generation == view.activation_generation
+            and approval.phase2_restore_generation == view.restore_generation
+        )
+
+
+def _approved_instance(approval: Phase2ProviderInstanceApproval) -> ApprovedProviderInstance:
+    try:
+        return ApprovedProviderInstance(
+            instance_id=approval.instance_id,
+            kind=OfficialProviderKind(approval.provider_kind),
+            employer_identity=approval.employer_identity,
+            hosts=_string_tuple(approval.hosts_json),
+            endpoint_url=approval.endpoint_url,
+            redirect_hosts=_string_tuple(approval.redirect_hosts_json),
+            path_prefixes=_string_tuple(approval.path_prefixes_json),
+            parser_version=approval.parser_version,
+            max_response_bytes=approval.max_response_bytes,
+            min_request_interval_seconds=approval.min_request_interval_seconds,
+            content_types=_string_tuple(approval.content_types_json),
+            source_identifier=approval.source_identifier,
+        )
+    except (TypeError, ValueError) as error:
         raise ProviderConfigurationError(
-            "Aggregator discovery is retired; configure approved official provider instances."
-        )
+            "approved official provider metadata is invalid"
+        ) from error
 
-    def _retired_aggregator_plans(
-        self,
-        inputs: Phase1ActivationInputs,
-        listing_limit: int | None,
-        charge_limit: Decimal,
-    ) -> tuple[_ProviderPlan, ...]:
-        role = inputs.profile.payload.eligible_roles[0]
-        location = inputs.profile.payload.locations[0]
-        limits = ProviderLimits()
-        count = listing_limit or limits.linkedin_listing_limit
-        return (
-            _ProviderPlan(
-                "apify-linkedin",
-                ProviderRequest(
-                    "apify-linkedin", role, location, count, charge_limit
-                ),
-                ApifyProvider(APIFY_LINKEDIN_ACTOR),
-            ),
-            _ProviderPlan(
-                "apify-naukri",
-                ProviderRequest(
-                    "apify-naukri", role, location,
-                    listing_limit or limits.naukri_listing_limit, charge_limit
-                ),
-                ApifyProvider(APIFY_NAUKRI_ACTOR),
-            ),
-            _ProviderPlan(
-                "apify-glassdoor",
-                ProviderRequest(
-                    "apify-glassdoor",
-                    role,
-                    location,
-                    listing_limit or limits.glassdoor_listing_limit,
-                    charge_limit,
-                ),
-                ApifyProvider(APIFY_GLASSDOOR_ACTOR),
-            ),
-            _ProviderPlan(
-                "jsearch",
-                ProviderRequest(
-                    "jsearch", role, location, limits.jsearch_listing_limit
-                ),
-                JSearchProvider(),
-            ),
-        )
+
+def _string_tuple(value: list[object]) -> tuple[str, ...]:
+    strings = tuple(item for item in value if isinstance(item, str))
+    if len(strings) != len(value):
+        raise ValueError("approved official provider metadata is invalid")
+    return strings
 
 
 def _phase1_run_fields(inputs: Phase1ActivationInputs) -> dict[str, object]:

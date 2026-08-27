@@ -12,8 +12,9 @@ from job_search_cockpit.phase1_contract.snapshots import (
     SearchProfileSnapshot,
 )
 from job_search_cockpit.phase2.config import Phase2Settings
-from job_search_cockpit.phase2.discovery import DiscoveryService
+from job_search_cockpit.phase2.discovery import DiscoveryService, _approved_instance
 from job_search_cockpit.phase2.discovery_types import ProviderRequest
+from job_search_cockpit.phase2.models import Phase2ProviderInstanceApproval
 from job_search_cockpit.phase2.provider_config import (
     ProviderConfigurationError,
     ProviderCredentials,
@@ -250,7 +251,35 @@ def test_discovery_planning_rejects_the_retired_aggregator_pipeline(tmp_path: Pa
         ),
     )
 
-    with pytest.raises(ProviderConfigurationError, match="official provider instances"):
-        DiscoveryService(Phase2Settings(data_dir=tmp_path))._plans(
-            inputs, listing_limit=5, charge_limit=Decimal("0.10")
-        )
+    with pytest.raises(ProviderConfigurationError, match="no approved official provider instances"):
+        DiscoveryService(Phase2Settings(data_dir=tmp_path))._plans(inputs)
+
+
+def test_approved_instance_uses_only_durable_approval_metadata() -> None:
+    approval = Phase2ProviderInstanceApproval(
+        id="approval-1",
+        instance_id="employer-greenhouse-v1",
+        provider_kind="greenhouse_public_board",
+        employer_identity="Example Employer",
+        hosts_json=["boards-api.greenhouse.io"],
+        endpoint_url="https://boards-api.greenhouse.io/v1/boards/example/jobs?content=true",
+        redirect_hosts_json=[],
+        path_prefixes_json=["/v1/boards/example/jobs"],
+        parser_version="greenhouse-public-v1",
+        content_types_json=["application/json"],
+        source_identifier="example",
+        max_response_bytes=1_000_000,
+        min_request_interval_seconds=30,
+        enabled=True,
+        actor="local-user",
+        reason="approved boundary",
+        phase2_activation_generation=1,
+        phase2_restore_generation=0,
+        approval_fingerprint="a" * 64,
+    )
+
+    instance = _approved_instance(approval)
+
+    assert instance.instance_id == approval.instance_id
+    assert instance.source_identifier == "example"
+    assert instance.content_types == ("application/json",)

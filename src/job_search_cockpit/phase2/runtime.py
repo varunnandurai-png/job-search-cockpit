@@ -63,7 +63,6 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
             phase1_port,
             activation_service,
             coordinator,
-            dotenv_path=settings.source_root / ".env",
         ),
         verified_job_authorization_service=verification_service,
         resume_preparation_service=ResumePreparationService(
