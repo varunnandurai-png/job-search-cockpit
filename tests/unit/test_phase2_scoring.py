@@ -26,7 +26,10 @@ from job_search_cockpit.phase2.assessment_types import (
     GateResult,
     MatchScoreComponents,
     QualifiedMatchBand,
+    Requirement,
+    RequirementEvidenceMapping,
     RequirementKind,
+    ScoringComponent,
 )
 
 
@@ -62,6 +65,24 @@ def test_assessment_states_are_bounded_to_the_approved_vocabulary() -> None:
     assert RequirementKind.REQUIRED.value == "required"
     assert EvidenceRelation.ADJACENT.value == "adjacent"
     assert ConfidenceState.BLOCKED.value == "blocked"
+
+
+def test_requirement_evidence_mapping_refuses_claimed_support_without_exact_fact_ids() -> None:
+    requirement = Requirement(
+        requirement_id="requirements.product-roadmap",
+        kind=RequirementKind.REQUIRED,
+        component=ScoringComponent.RESPONSIBILITY,
+        source_span_id="span-1",
+        start_offset=0,
+        end_offset=24,
+    )
+
+    with pytest.raises(ValueError, match="exact Phase I fact identifiers"):
+        RequirementEvidenceMapping(
+            requirement_id=requirement.requirement_id,
+            relation=EvidenceRelation.DIRECT,
+            reason_code="direct/validated_requirement",
+        )
 
 
 def test_component_score_caps_duplicate_evidence_at_its_fixed_maximum() -> None:

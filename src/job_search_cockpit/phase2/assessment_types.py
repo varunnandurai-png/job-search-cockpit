@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -41,6 +42,61 @@ class QualifiedMatchBand(StrEnum):
     WORTHWHILE_WITH_REQUIRED_GAP = "worthwhile_with_required_gap"
     STRONG = "strong"
     WORTHWHILE = "worthwhile"
+
+
+class ScoringComponent(StrEnum):
+    ROLE = "role"
+    DOMAIN = "domain"
+    RESPONSIBILITY = "responsibility"
+    OUTCOME = "outcome"
+    TECHNICAL = "technical"
+    SENIORITY = "seniority"
+    EVIDENCE = "evidence"
+
+
+@dataclass(frozen=True, slots=True)
+class Requirement:
+    """A bounded, cited requirement reference with no retained listing wording."""
+
+    requirement_id: str
+    kind: RequirementKind
+    component: ScoringComponent
+    source_span_id: str
+    start_offset: int
+    end_offset: int
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_.-]{0,254}", self.requirement_id) is None:
+            raise ValueError("requirement ID must be canonical")
+        if not self.source_span_id.strip():
+            raise ValueError("source span ID is required")
+        if not 0 <= self.start_offset < self.end_offset <= 200_000:
+            raise ValueError("requirement offsets are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class RequirementEvidenceMapping:
+    """One score-relevant relation, bound only to opaque approved fact identifiers."""
+
+    requirement_id: str
+    relation: EvidenceRelation
+    reason_code: str
+    claim_id: str | None = None
+    revision_id: str | None = None
+    support_assertion_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_.-]{0,254}", self.requirement_id) is None:
+            raise ValueError("requirement ID must be canonical")
+        if re.fullmatch(r"[a-z][a-z0-9_/-]{0,119}", self.reason_code) is None:
+            raise ValueError("mapping reason code must be bounded")
+        identifiers = (self.claim_id, self.revision_id, self.support_assertion_id)
+        if self.relation is EvidenceRelation.NONE:
+            if any(identifier is not None for identifier in identifiers):
+                raise ValueError("no-support mapping cannot include a Phase I fact identifier")
+            return
+        if not all(identifier is not None and identifier.strip() for identifier in identifiers):
+            raise ValueError("claimed support requires exact Phase I fact identifiers")
 
 
 @dataclass(frozen=True, slots=True)
