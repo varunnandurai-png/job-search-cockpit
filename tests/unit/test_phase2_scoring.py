@@ -147,6 +147,21 @@ def test_fixed_calculator_derives_component_points_from_locked_anchors() -> None
     assert components.total == 35
 
 
+def test_fixed_calculator_does_not_promote_duplicate_requirement_to_close_anchor() -> None:
+    components = calculate_match_score(
+        (
+            ScoreRequirement(
+                "role.one", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
+            ),
+            ScoreRequirement(
+                "role.one", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
+            ),
+        )
+    )
+
+    assert components.role == 15
+
+
 def test_component_anchor_requires_two_direct_requirements_for_close() -> None:
     anchor = component_anchor(
         (

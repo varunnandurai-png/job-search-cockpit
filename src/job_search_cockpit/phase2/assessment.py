@@ -325,6 +325,12 @@ def anchor_points(maximum: int, anchor: ComponentAnchor) -> int:
 
 def calculate_match_score(requirements: tuple[ScoreRequirement, ...]) -> MatchScoreComponents:
     """Derive the seven fixed component scores from validated requirement relations."""
+    unique_requirements: dict[str, ScoreRequirement] = {}
+    for requirement in requirements:
+        existing = unique_requirements.get(requirement.requirement_id)
+        if existing is not None and existing != requirement:
+            raise ValueError("duplicate requirement has conflicting score inputs")
+        unique_requirements[requirement.requirement_id] = requirement
     maxima = {
         ScoringComponent.ROLE: 20,
         ScoringComponent.DOMAIN: 20,
@@ -344,7 +350,7 @@ def calculate_match_score(requirements: tuple[ScoreRequirement, ...]) -> MatchSc
                         requirement.kind,
                         requirement.relation,
                     )
-                    for requirement in requirements
+                    for requirement in unique_requirements.values()
                     if requirement.component is component
                 )
             ),
