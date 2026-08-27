@@ -289,6 +289,7 @@ class Phase2ProviderInstanceApproval(Phase2Base):
     path_prefixes_json: Mapped[list[object]] = mapped_column(JSON)
     parser_version: Mapped[str] = mapped_column(String(120))
     content_types_json: Mapped[list[object]] = mapped_column(JSON)
+    source_identifier: Mapped[str | None] = mapped_column(String(240))
     max_response_bytes: Mapped[int] = mapped_column(Integer)
     min_request_interval_seconds: Mapped[int] = mapped_column(Integer)
     enabled: Mapped[bool] = mapped_column(Boolean)

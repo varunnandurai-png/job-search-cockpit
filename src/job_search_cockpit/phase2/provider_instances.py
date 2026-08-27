@@ -2,7 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from ipaddress import ip_address
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
+
+_SENSITIVE_QUERY_NAMES = frozenset(
+    {"access_token", "api_key", "authorization", "key", "password", "secret", "token"}
+)
 
 
 class OfficialProviderKind(StrEnum):
@@ -29,6 +33,7 @@ class ApprovedProviderInstance:
     max_response_bytes: int
     min_request_interval_seconds: int
     content_types: tuple[str, ...] = ("application/json",)
+    source_identifier: str | None = None
 
     def __post_init__(self) -> None:
         if not self.instance_id.strip() or not self.employer_identity.strip():
@@ -41,6 +46,10 @@ class ApprovedProviderInstance:
             raise ValueError("provider instance path prefixes must be absolute")
         if not self.parser_version.strip():
             raise ValueError("provider instance requires a parser version")
+        if self.source_identifier is not None and not _is_source_identifier(
+            self.source_identifier
+        ):
+            raise ValueError("provider instance source identifier is invalid")
         if not self.content_types or len(set(self.content_types)) != len(self.content_types):
             raise ValueError("provider instance requires exact content types")
         if any(not _is_exact_content_type(content_type) for content_type in self.content_types):
@@ -56,7 +65,7 @@ class ApprovedProviderInstance:
             or endpoint.username is not None
             or endpoint.password is not None
             or endpoint.port not in {None, 443}
-            or endpoint.query
+            or _has_sensitive_query_parameter(endpoint.query)
             or endpoint.fragment
             or endpoint.hostname is None
             or endpoint.hostname.lower() not in self.hosts
@@ -114,6 +123,17 @@ def _is_exact_content_type(content_type: str) -> bool:
     token_characters = frozenset("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz")
     return bool(type_name) and bool(subtype) and all(
         character in token_characters for character in type_name + subtype
+    )
+
+
+def _is_source_identifier(value: str) -> bool:
+    return bool(value) and all(character.isalnum() or character in "-_" for character in value)
+
+
+def _has_sensitive_query_parameter(query: str) -> bool:
+    return any(
+        name.lower() in _SENSITIVE_QUERY_NAMES
+        for name, _value in parse_qsl(query, keep_blank_values=True)
     )
 
 
