@@ -18,7 +18,7 @@ from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationAttemptStore,
     ResumePreparationService,
 )
-from job_search_cockpit.phase2.shortlist import AssessmentReviewService
+from job_search_cockpit.phase2.shortlist import AssessmentReviewService, SqlAssessmentReviewStore
 from job_search_cockpit.phase2.verification import (
     CatalogVerifiedJobPreparationPort,
     VerifiedJobAuthorizationService,
@@ -62,7 +62,8 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         instance_lock=instance_lock,
         activation_service=activation_service,
         assessment_review_service=AssessmentReviewService(
-            AssessmentAuthorityService(phase1_port, activation_service)
+            AssessmentAuthorityService(phase1_port, activation_service),
+            SqlAssessmentReviewStore(engine),
         ),
         discovery_service=DiscoveryService(
             phase2_settings,

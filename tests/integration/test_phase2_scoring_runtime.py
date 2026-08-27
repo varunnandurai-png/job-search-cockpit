@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from job_search_cockpit.phase2.assessment import (
@@ -26,6 +28,10 @@ from job_search_cockpit.phase2.models import (
     Phase2MatchComponent,
     Phase2RequirementMapping,
     Phase2ShortlistDecision,
+)
+from job_search_cockpit.phase2.shortlist import (
+    AssessmentReviewItem,
+    AssessmentReviewService,
 )
 from job_search_cockpit.phase2.types import ActivationCommand
 from tests.integration.test_phase2_activation import _service
@@ -103,6 +109,15 @@ class _RecordingCoordinator:
     def run(self, operation: object, reason: str, *, actor: str = "system") -> object:
         del reason, actor
         return operation(self.session)  # type: ignore[operator]
+
+
+class _StaticAssessmentReviewStore:
+    def __init__(self, items: tuple[AssessmentReviewItem, ...]) -> None:
+        self.items = items
+
+    def current_items(self, snapshot: _OpaqueAuthoritySnapshot) -> tuple[AssessmentReviewItem, ...]:
+        assert snapshot.persistence_fields()["phase2_activation_generation"] == 1
+        return self.items
 
 
 def _publication_command() -> AssessmentPublicationCommand:
@@ -204,6 +219,41 @@ def test_publication_appends_only_opaque_assessment_metadata() -> None:
         if isinstance(record, Phase2LocationEligibilityPath)
     )
     assert location.location_fingerprint != "location-1"
+
+
+def test_current_review_returns_only_fenced_eligible_assessments() -> None:
+    now = datetime(2026, 8, 27, tzinfo=UTC)
+    service = AssessmentReviewService(
+        _StableOpaqueAuthority(),  # type: ignore[arg-type]
+        _StaticAssessmentReviewStore(
+            (
+                AssessmentReviewItem(
+                    assessment_id="assessment-current",
+                    score=90,
+                    qualified_band="strong",
+                    confidence=ConfidenceState.HIGH,
+                    decision="focused",
+                    assessment_state="stable",
+                    created_at=now,
+                ),
+                AssessmentReviewItem(
+                    assessment_id="assessment-excluded",
+                    score=100,
+                    qualified_band="strong",
+                    confidence=ConfidenceState.HIGH,
+                    decision="not_focused",
+                    assessment_state="stable",
+                    created_at=now,
+                ),
+            )
+        ),
+    )
+
+    view = service.current_view()
+
+    assert view.current is True
+    assert [item.assessment_id for item in view.focused] == ["assessment-current"]
+    assert all(item.score >= 70 for item in view.focused)
 
 
 def test_assessment_view_is_authenticated_and_redacted_without_current_authority(

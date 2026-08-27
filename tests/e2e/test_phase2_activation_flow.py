@@ -18,3 +18,4 @@ def test_assessment_page_renders_the_redacted_authority_state(page: Page, vault_
 
         expect(page.get_by_role("heading", name="Match assessments")).to_be_visible()
         expect(page.get_by_text("Current match assessments are unavailable.")).to_be_visible()
+        expect(page.locator("form")).to_have_count(0)

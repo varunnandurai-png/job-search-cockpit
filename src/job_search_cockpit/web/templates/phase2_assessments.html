@@ -4,7 +4,33 @@
   <p>Private local review</p>
   <h1>Match assessments</h1>
   {% if assessment_review and assessment_review.current %}
-    <p>No current match assessments are available.</p>
+    {% if assessment_review.focused %}
+      <table>
+        <caption>Current focused matches</caption>
+        <thead>
+          <tr>
+            <th scope="col">Assessment</th>
+            <th scope="col">Score</th>
+            <th scope="col">Match band</th>
+            <th scope="col">Confidence</th>
+            <th scope="col">Decision</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for assessment in assessment_review.focused %}
+            <tr>
+              <td>{{ assessment.assessment_id }}</td>
+              <td>{{ assessment.score }}</td>
+              <td>{{ assessment.qualified_band }}</td>
+              <td>{{ assessment.confidence }}</td>
+              <td>{{ assessment.decision }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No current match assessments are available.</p>
+    {% endif %}
   {% else %}
     <p>Current match assessments are unavailable.</p>
     <p>Historical assessments remain redacted until Phase I and Phase II authority are current.</p>
