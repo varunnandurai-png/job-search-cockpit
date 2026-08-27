@@ -412,3 +412,8 @@ Expected: the two hashes are identical and `git status --short` is empty.
 
 **Consistency:** Every adapter operates on `ApprovedProviderInstance`, every transport call is activation-revalidated and instance-contained, and every implementation increment has a focused test, commit, push, and local/remote SHA comparison.
 
+## Execution record — 2026-08-27
+
+Tasks 1–5 are implemented and pushed as `14a9221`, `d4b269f`, `3a38987`, `6a4eafa`, and `1061c0e`. The default runtime has an empty official-provider catalog and fails closed; no employer, endpoint, parser, executor, or live listing is configured.
+
+Task 6 supersedes the aggregator-oriented discovery design with the direct-official-source design and adds the disabled-runtime integration check. The next action remains a user decision on one named official employer board before any external read-only smoke check.

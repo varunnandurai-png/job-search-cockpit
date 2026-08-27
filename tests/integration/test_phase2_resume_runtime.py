@@ -26,3 +26,15 @@ def test_runtime_denies_resume_preparation_without_verified_job_readiness(
             )
     finally:
         runtime.close()
+
+
+def test_default_runtime_has_no_enabled_official_provider_instance(
+    phase2_settings,
+    tmp_path,
+) -> None:
+    settings = Settings.for_tests(phase2_settings.data_dir, tmp_path / "sanitized-sources")
+    runtime = prepare_phase2_runtime(settings, _Phase1Port())
+    try:
+        assert runtime.discovery_service.status_view().provider_configuration_available is False
+    finally:
+        runtime.close()

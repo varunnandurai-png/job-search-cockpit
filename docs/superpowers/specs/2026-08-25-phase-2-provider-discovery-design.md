@@ -1,91 +1,69 @@
 # Phase II provider discovery and verified-job authorization design
 
+## Status
+
+The earlier Apify/JSearch pilot is retired. Its aggregator adapters are unreachable and must not be configured, invoked, or re-enabled under this design.
+
+The implemented local-only foundation supports direct official sources only:
+
+- `greenhouse_public_board`
+- `lever_public_board`
+- `official_page_read_only`
+- `manual_official_url_read_only`
+
+No provider instance is enabled by default. No external request, job collection, parser, executor, résumé, document, draft, application, upload, sharing action, or submission has occurred during implementation.
+
 ## Purpose
 
-Add a bounded, local job-discovery path that can eventually issue a verified,
-short-lived authorization for Phase II preparation. A provider listing is only
-a candidate. It cannot authorize résumé preparation, document generation, or
-an application submission by itself.
+Phase II provides a bounded local path that can eventually discover real public jobs and issue a verified, short-lived preparation authorization. A source listing is only a candidate: it cannot authorize résumé preparation, document generation, or an application submission.
 
-## Sources and pilot limits
+## Approval model
 
-The first manual pilot uses these read-only sources:
+Adapter-type support does not authorize a source. Each provider instance requires an immutable, append-only local approval event that records:
 
-- Apify LinkedIn Actor: `curious_coder/linkedin-jobs-scraper`, at most 40
-  listings.
-- Apify Naukri Actor: `automation-lab/naukri-scraper`, at most 25 listings.
-- Apify Glassdoor Actor: `valig/glassdoor-jobs-scraper`, at most 25 listings.
-- JSearch through the configured RapidAPI subscription: one request, bounded to
-  25 returned listings.
+- Exact employer identity, adapter kind, initial hosts, redirect hosts, endpoint, allowed path prefixes, and immutable source identifier where the public board protocol requires one.
+- Exact parser version and content-type allowlist.
+- Bounded response size and request interval.
+- Enabled/disabled state, actor, reason, current activation/restore generations, timestamp, and safe approval fingerprint.
 
-Each Apify run uses a US$0.50 maximum charge when the selected Actor supports a
-per-run charge limit. The application also enforces the listing caps. No
-scheduled runs, automatic retries, browser automation, provider sign-in,
-submission, uploads, sharing, or notifications are in scope.
+The discovery planner considers only the newest event for an instance ID. It accepts that instance only when the event is enabled and matches the current Phase II activation and restore generations. A zero-instance catalog fails closed before credential loading, executor construction, parsing, persistence, or network access.
 
-Provider credentials stay only in the git-ignored local `.env` file. They are
-never copied into application storage, logs, test output, or version control.
+## Direct-source containment
 
-## Discovery boundary
+A contained transport requires a revalidation callback and an injected pinned executor. There is no default HTTP client, browser, credential, or fallback transport.
 
-1. A user explicitly starts a manual discovery run.
-2. Read-only provider adapters retrieve the bounded listings and retain each
-   source observation with its source identifier, canonical URL, retrieval
-   time, raw-content fingerprint, and provider/run metadata.
-3. Phase II normalizes source observations and deduplicates them into local
-   job records without discarding the source provenance.
-4. The service retrieves the current profile through the internal Phase I
-   matching port and fails closed if the snapshot cannot be obtained or changes.
-   It does not read Phase I tables or hard-code roles, locations, compensation,
-   exclusions, or other search rules.
-5. Eligibility and requirement assessment produce an auditable candidate
-   result. Uncertain, stale, incomplete, or conflicting source data remains
-   unverified.
-6. Only a separately explicit local verification decision for an eligible,
-   current job revision may issue a one-use, expiring
-   `VerifiedJobPreparationAuthorization`.
-7. Phase II revalidates that authorization immediately before preparation,
-   drafting, finalisation, and any artefact access.
+Before DNS resolution, before executor delegation, and immediately after response receipt, it revalidates Phase II authority. It rejects non-HTTPS URLs, userinfo, fragments, unsafe or sensitive query parameters, non-default ports, unapproved hosts and paths, DNS answers that include non-public addresses, response connections outside the validated address set, too-large bodies, unexpected status codes, unexpected MIME types, and redirect chains outside the exact instance allowlist.
+
+At most two redirects are allowed. The transport accepts only the MIME types declared in the immutable approval record. Response material remains inert bytes for an exact registered parser; no generic HTML parser, JavaScript execution, selector inference, browser automation, sign-in, upload, sharing, or submission exists.
+
+## Adapter contracts
+
+Greenhouse and Lever adapters derive their public endpoint from the immutable source identifier and require exact equality with the approved endpoint:
+
+- Greenhouse: `https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true`
+- Lever: `https://api.lever.co/v0/postings/{site}?mode=json`
+
+Official-page and manual-URL adapters use the already-approved endpoint and require a parser registered for the exact instance ID and parser version. A missing or version-mismatched parser blocks before transport. This code contains no configured employer, endpoint, parser, executor, or listing response fixture.
 
 ## Data minimization and retention
 
-The Phase II catalog stores only the listing data, source provenance,
-assessment results, immutable revision fingerprints, and authorization
-metadata required for discovery and audit. It stores no provider credential,
-cookie, browser session, answer wording, OTP, password, voluntary-sensitive
-disclosure, résumé draft, or application submission state.
+The Phase II catalog stores only approved public listing fields after a separately approved real retrieval, source provenance, immutable revision fingerprints, assessment metadata, and authorization metadata. It never stores provider credentials, cookies, authorization headers, raw HTTP headers, raw HTML, IP addresses, DNS answers, sessions, passwords, OTPs, answer wording, résumé text, application submission state, or Phase I facts.
 
-Listings are append-only observations. Normalized job records preserve source
-links and revision history so changed or closed listings invalidate a prior
-candidate assessment or authorization rather than being rewritten in place.
+Listings and approval events are append-only. Changed or closed listings create new observations/revisions; they are never rewritten in place.
 
-## Safety and testing
+## Required future user gate
 
-- Production uses the existing `VerifiedJobReadinessUnavailable` adapter until
-  this design is implemented and a specific authorization is issued.
-- No synthetic data, fabricated listings, or saved response fixtures are
-  created. Static tests may cover only configuration and fail-closed behavior
-  without listing payloads. Provider verification uses a user-started,
-  real-data micro-run: at most five listings from each selected Apify Actor,
-  a US$0.10 per-Actor limit when supported, and one JSearch request bounded to
-  25 listings. Returned
-  public listings are production catalog records, never test fixtures.
-- Provider adapters use a 10-second connect timeout and a 90-second read timeout
-  to accommodate the selected Naukri Actor, with fixed request/listing limits and
-  sanitized error reporting. They make no retry, polling, webhook, or browser
-  automation behavior.
-- Static tests prove that unavailable configuration and Phase I snapshots block
-  provider access, and that credentials never enter persistence or output. The
-  user-authorized real-data micro-run verifies source retrieval, catalog
-  persistence, deduplication, and the rule that a listing cannot directly
-  create a preparation attempt, document, or submission. Source selections are
-  reviewed against the Apify Store pages:
-  https://apify.com/curious_coder/linkedin-jobs-scraper,
-  https://apify.com/automation-lab/naukri-scraper, and
-  https://apify.com/valig/glassdoor-jobs-scraper.
+Before any live smoke check, the user must approve one named provider instance with all of:
 
-## Deferred work
+1. Employer identity and adapter kind.
+2. Exact board or endpoint URL, source identifier where applicable, initial host allowlist, redirect-host allowlist, and path policy.
+3. Parser version, declared MIME types, response-size cap, and request interval.
+4. The exact read-only executor implementation and a maximum listing count for one manual smoke check.
 
-The remaining WP4 document adapter, finalisation route, and authorised review
-view remain blocked on a real verified-job authorization. They are implemented
-only after this upstream discovery and verification boundary is complete.
+That approval authorizes only the named instance and bounded read-only check. It does not authorize search engines, aggregators, browser automation, account sign-in, application drafting, résumé preparation, document finalisation, upload, sharing, or submission.
+
+## Testing and deferred work
+
+Static and local database tests cover approval validation, append-only storage, latest/current approval selection, registry/parser gating, endpoint derivation, DNS/query/MIME/address containment, activation revalidation, and disabled runtime behavior. They contain no synthetic job listings or saved provider responses.
+
+A later explicit user-approved live check may retain returned public listings only as production catalog records. Real discovery, requirement extraction, scoring, shortlist publication, and verified-job authorization remain separately gated.
