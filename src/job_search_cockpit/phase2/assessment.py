@@ -1,7 +1,12 @@
 from dataclasses import dataclass
 from fractions import Fraction
 
-from job_search_cockpit.phase1_contract.snapshots import Phase1ResumeFactProjectionRequest
+from job_search_cockpit.phase1_contract.service import Phase1ContractUnavailable
+from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1ActivationInputs,
+    Phase1ResumeFactProjectionRequest,
+)
+from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.assessment_types import (
     ComponentAnchor,
     ConfidenceState,
@@ -10,11 +15,72 @@ from job_search_cockpit.phase2.assessment_types import (
     RequirementKind,
 )
 from job_search_cockpit.phase2.requirements import build_requirement_ledger
+from job_search_cockpit.phase2.types import (
+    Phase2Action,
+    Phase2ActivationUnavailable,
+    Phase2ActivationView,
+)
 from job_search_cockpit.ports import Phase1MatchingPort
 
 
 class AssessmentUnavailable(ValueError):
     """Raised when an assessment cannot use current approved Phase I evidence."""
+
+
+@dataclass(frozen=True, slots=True)
+class AssessmentAuthoritySnapshot:
+    """The exact cross-store state that a persisted assessment must bind to."""
+
+    phase1_inputs: Phase1ActivationInputs
+    phase2_view: Phase2ActivationView
+
+    def persistence_fields(self) -> dict[str, str | int]:
+        return {
+            "phase1_profile_fingerprint": self.phase1_inputs.profile.fingerprint,
+            "phase1_profile_generation": self.phase1_inputs.profile.active_profile_generation,
+            "phase1_readiness_fingerprint": self.phase1_inputs.readiness.fingerprint,
+            "phase1_readiness_generation": self.phase1_inputs.readiness.readiness_generation,
+            "phase1_authority_fingerprint": self.phase1_inputs.acceptance_receipt.fingerprint,
+            "phase1_authority_generation": self.phase1_inputs.readiness.authority_high_water_mark,
+            "phase1_restore_generation": self.phase1_inputs.readiness.restore_generation,
+            "phase2_activation_generation": self.phase2_view.activation_generation,
+            "phase2_restore_generation": self.phase2_view.restore_generation,
+        }
+
+
+class AssessmentAuthorityService:
+    """Captures and revalidates the authority fence around local assessment work."""
+
+    def __init__(
+        self, phase1_port: Phase1MatchingPort, activation_service: Phase2ActivationService
+    ) -> None:
+        self._phase1_port = phase1_port
+        self._activation_service = activation_service
+
+    def capture_for_assessment(self) -> AssessmentAuthoritySnapshot:
+        try:
+            phase2_view = self._activation_service.revalidate_before(Phase2Action.SCORING)
+            phase1_inputs = self._phase1_port.activation_inputs()
+            if self._phase1_port.revalidate_activation_inputs(phase1_inputs) != phase1_inputs:
+                raise AssessmentUnavailable("Assessment authority changed during capture.")
+        except (Phase1ContractUnavailable, Phase2ActivationUnavailable, ValueError) as error:
+            raise AssessmentUnavailable("Assessment authority is unavailable.") from error
+        return AssessmentAuthoritySnapshot(phase1_inputs, phase2_view)
+
+    def revalidate_before_publication(
+        self, expected: AssessmentAuthoritySnapshot
+    ) -> AssessmentAuthoritySnapshot:
+        try:
+            phase2_view = self._activation_service.revalidate_before(Phase2Action.PUBLICATION)
+            phase1_inputs = self._phase1_port.revalidate_activation_inputs(expected.phase1_inputs)
+        except (Phase1ContractUnavailable, Phase2ActivationUnavailable, ValueError) as error:
+            raise AssessmentUnavailable(
+                "Assessment authority changed before publication."
+            ) from error
+        current = AssessmentAuthoritySnapshot(phase1_inputs, phase2_view)
+        if current.persistence_fields() != expected.persistence_fields():
+            raise AssessmentUnavailable("Assessment authority changed before publication.")
+        return current
 
 
 class AssessmentEvidenceService:
