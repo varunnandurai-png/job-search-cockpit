@@ -8,6 +8,7 @@ from job_search_cockpit.phase2.application_drafts import (
     ReusableAnswerService,
     ReusableAnswerStore,
 )
+from job_search_cockpit.phase2.assessment import AssessmentAuthorityService
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
 from job_search_cockpit.phase2.discovery import DiscoveryService
@@ -17,6 +18,7 @@ from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationAttemptStore,
     ResumePreparationService,
 )
+from job_search_cockpit.phase2.shortlist import AssessmentReviewService
 from job_search_cockpit.phase2.verification import (
     CatalogVerifiedJobPreparationPort,
     VerifiedJobAuthorizationService,
@@ -29,6 +31,7 @@ class Phase2Runtime:
     coordinator: Phase2MutationCoordinator
     instance_lock: Phase2InstanceLock
     activation_service: Phase2ActivationService
+    assessment_review_service: AssessmentReviewService
     discovery_service: DiscoveryService
     verified_job_authorization_service: VerifiedJobAuthorizationService
     resume_preparation_service: ResumePreparationService
@@ -58,6 +61,9 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         coordinator=coordinator,
         instance_lock=instance_lock,
         activation_service=activation_service,
+        assessment_review_service=AssessmentReviewService(
+            AssessmentAuthorityService(phase1_port, activation_service)
+        ),
         discovery_service=DiscoveryService(
             phase2_settings,
             phase1_port,

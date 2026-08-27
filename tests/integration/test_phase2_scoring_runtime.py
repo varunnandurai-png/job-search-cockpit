@@ -6,6 +6,7 @@ from job_search_cockpit.phase2.assessment import (
 )
 from job_search_cockpit.phase2.types import ActivationCommand
 from tests.integration.test_phase2_activation import _service
+from tests.support.web import authenticated_test_app
 
 
 def test_assessment_publication_rejects_phase1_drift_after_authority_capture(
@@ -27,3 +28,14 @@ def test_assessment_publication_rejects_phase1_drift_after_authority_capture(
 
         with pytest.raises(AssessmentUnavailable, match="authority changed"):
             authority_service.revalidate_before_publication(captured)
+
+
+def test_assessment_view_is_authenticated_and_redacted_without_current_authority(
+    vault_settings,
+) -> None:
+    with authenticated_test_app(vault_settings) as client:
+        response = client.get("/phase-2/assessments")
+
+    assert response.status_code == 200
+    assert "Current match assessments are unavailable." in response.text
+    assert "safe wording" not in response.text.lower()

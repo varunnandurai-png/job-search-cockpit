@@ -59,6 +59,18 @@ def local_review_page(request: Request) -> Response:
     return response
 
 
+@router.get("/phase-2/assessments", response_class=HTMLResponse)
+def assessment_page(request: Request) -> Response:
+    runtime = _runtime(request)
+    review = runtime.assessment_review_service.current_view() if runtime is not None else None
+    response: Response = request.app.state.templates.TemplateResponse(
+        request,
+        "phase2_assessments.html",
+        {"assessment_review": review},
+    )
+    return response
+
+
 @router.post("/phase-2/resume-reviews")
 async def start_resume_review(request: Request) -> Response:
     form = await request.form()

@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from job_search_cockpit.phase2.assessment import (
+    AssessmentAuthorityService,
+    AssessmentUnavailable,
+)
 from job_search_cockpit.phase2.assessment_types import ConfidenceState
 
 _CONFIDENCE_ORDER = {
@@ -9,6 +13,26 @@ _CONFIDENCE_ORDER = {
     ConfidenceState.LOW: 2,
     ConfidenceState.BLOCKED: 3,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class AssessmentReviewView:
+    current: bool
+
+
+class AssessmentReviewService:
+    """Provides an authority-revalidated, non-sensitive assessment review state."""
+
+    def __init__(self, authority_service: AssessmentAuthorityService) -> None:
+        self._authority_service = authority_service
+
+    def current_view(self) -> AssessmentReviewView:
+        try:
+            captured = self._authority_service.capture_for_assessment()
+            self._authority_service.revalidate_before_publication(captured)
+        except AssessmentUnavailable:
+            return AssessmentReviewView(current=False)
+        return AssessmentReviewView(current=True)
 
 
 @dataclass(frozen=True, slots=True)
