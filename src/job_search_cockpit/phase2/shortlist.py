@@ -47,6 +47,7 @@ def focused_shortlist(
         if candidate.hard_gates_pass
         and candidate.official_source_current
         and candidate.assessment_current
+        and candidate.confidence is not ConfidenceState.BLOCKED
         and candidate.score >= 70
     )
     ordered = sorted(

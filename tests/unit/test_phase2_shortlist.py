@@ -28,6 +28,17 @@ def test_focused_shortlist_rejects_a_high_score_with_an_unresolved_hard_gate() -
     assert tuple(candidate.assessment_id for candidate in shortlist) == ("qualified",)
 
 
+def test_focused_shortlist_rejects_blocked_confidence_even_with_a_high_score() -> None:
+    shortlist = focused_shortlist(
+        (
+            ShortlistCandidate("blocked", 95, confidence=ConfidenceState.BLOCKED),
+            ShortlistCandidate("qualified", 70),
+        )
+    )
+
+    assert tuple(candidate.assessment_id for candidate in shortlist) == ("qualified",)
+
+
 def test_focused_shortlist_orders_equal_scores_by_higher_confidence() -> None:
     shortlist = focused_shortlist(
         (
