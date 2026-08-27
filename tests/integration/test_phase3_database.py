@@ -59,7 +59,7 @@ def test_phase3_migration_head_and_append_only_triggers_are_effective(
 
     with sqlite3.connect(phase2_settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0014_match_assessment_publication_metadata",
+            "0015_match_assessment_band_inputs",
         )
         connection.execute(
             """
