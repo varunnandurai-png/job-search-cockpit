@@ -46,6 +46,28 @@ def test_match_assessment_schema_is_append_only_and_avoids_sensitive_text(
     assert "prevent_phase2_match_assessments_delete" in triggers
 
 
+def test_requirement_mapping_metadata_retains_only_citations_and_opaque_fact_references(
+    phase2_settings: Phase2Settings,
+) -> None:
+    upgrade_phase2_database(f"sqlite:///{phase2_settings.database_path}")
+
+    with sqlite3.connect(phase2_settings.database_path) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(phase2_requirement_mappings)")
+        }
+
+    assert {
+        "requirement_kind",
+        "component",
+        "source_span_id",
+        "source_start_offset",
+        "source_end_offset",
+        "fact_revision_id",
+        "support_assertion_id",
+    } <= columns
+    assert not {"safe_wording", "public_description", "resume_text"} & columns
+
+
 def test_assessment_metadata_binds_each_derived_record_to_current_authority_generations(
     phase2_settings: Phase2Settings,
 ) -> None:

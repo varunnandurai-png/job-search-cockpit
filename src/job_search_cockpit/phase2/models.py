@@ -493,7 +493,18 @@ class Phase2RequirementMapping(AssessmentAuthorityFence, Phase2Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     match_assessment_id: Mapped[str] = mapped_column(ForeignKey("phase2_match_assessments.id"))
     requirement_id: Mapped[str] = mapped_column(String(120))
+    requirement_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="unbound"
+    )
+    component: Mapped[str] = mapped_column(String(32), nullable=False, server_default="unbound")
+    source_span_id: Mapped[str] = mapped_column(
+        String(120), nullable=False, server_default="unbound"
+    )
+    source_start_offset: Mapped[int] = mapped_column(Integer, nullable=False, server_default="-1")
+    source_end_offset: Mapped[int] = mapped_column(Integer, nullable=False, server_default="-1")
     claim_id: Mapped[str | None] = mapped_column(String(120))
+    fact_revision_id: Mapped[str | None] = mapped_column(String(120))
+    support_assertion_id: Mapped[str | None] = mapped_column(String(120))
     relation: Mapped[str] = mapped_column(String(16))
     reason_code: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
