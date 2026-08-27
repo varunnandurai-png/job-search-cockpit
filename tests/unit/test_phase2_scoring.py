@@ -105,6 +105,7 @@ def test_blocked_confidence_cannot_enter_the_focused_shortlist_at_any_score() ->
         confidence=ConfidenceState.BLOCKED,
         hard_gates_pass=True,
         current=True,
+        critical_floors_pass=True,
     )
 
     assert result.total_score == 100
@@ -129,6 +130,29 @@ def test_match_result_rejects_a_strong_band_below_the_strong_score_floor() -> No
             confidence=ConfidenceState.HIGH,
             hard_gates_pass=True,
             current=True,
+            critical_floors_pass=True,
+        )
+
+
+def test_match_result_rejects_a_strong_band_when_a_critical_floor_fails() -> None:
+    with pytest.raises(ValueError, match="strong band requires all critical component floors"):
+        MatchAssessmentResult(
+            assessment_id="assessment-1",
+            job_revision_id="revision-1",
+            components=MatchScoreComponents(
+                role=20,
+                domain=20,
+                responsibility=20,
+                technical=10,
+                outcome=15,
+                seniority=10,
+                evidence=5,
+            ),
+            qualified_band=QualifiedMatchBand.STRONG,
+            confidence=ConfidenceState.HIGH,
+            hard_gates_pass=True,
+            current=True,
+            critical_floors_pass=False,
         )
 
 

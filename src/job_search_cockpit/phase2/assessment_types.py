@@ -134,6 +134,7 @@ class MatchAssessmentResult:
     confidence: ConfidenceState
     hard_gates_pass: bool
     current: bool
+    critical_floors_pass: bool
 
     def __post_init__(self) -> None:
         if not self.assessment_id.strip() or not self.job_revision_id.strip():
@@ -148,6 +149,8 @@ class MatchAssessmentResult:
                 f"{self.qualified_band.value.replace('_', ' ')} band requires a raw score "
                 f"of at least {minimum_score}"
             )
+        if self.qualified_band is QualifiedMatchBand.STRONG and not self.critical_floors_pass:
+            raise ValueError("strong band requires all critical component floors")
 
     @property
     def total_score(self) -> int:
