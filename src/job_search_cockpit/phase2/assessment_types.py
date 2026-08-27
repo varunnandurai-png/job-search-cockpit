@@ -100,6 +100,42 @@ class RequirementEvidenceMapping:
 
 
 @dataclass(frozen=True, slots=True)
+class MatchAssessmentResult:
+    """An immutable numeric result whose shortlist eligibility remains fail-closed."""
+
+    assessment_id: str
+    job_revision_id: str
+    components: "MatchScoreComponents"
+    qualified_band: QualifiedMatchBand
+    confidence: ConfidenceState
+    hard_gates_pass: bool
+    current: bool
+
+    def __post_init__(self) -> None:
+        if not self.assessment_id.strip() or not self.job_revision_id.strip():
+            raise ValueError("assessment and job revision IDs are required")
+
+    @property
+    def total_score(self) -> int:
+        return self.components.total
+
+    @property
+    def focused_shortlist_eligible(self) -> bool:
+        return (
+            self.hard_gates_pass
+            and self.current
+            and self.confidence is not ConfidenceState.BLOCKED
+            and self.total_score >= 70
+            and self.qualified_band
+            in {
+                QualifiedMatchBand.STRONG,
+                QualifiedMatchBand.WORTHWHILE,
+                QualifiedMatchBand.WORTHWHILE_WITH_REQUIRED_GAP,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class MatchScoreComponents:
     """The fixed seven-component Phase II match-score breakdown."""
 

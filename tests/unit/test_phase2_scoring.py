@@ -24,6 +24,7 @@ from job_search_cockpit.phase2.assessment_types import (
     ConfidenceState,
     EvidenceRelation,
     GateResult,
+    MatchAssessmentResult,
     MatchScoreComponents,
     QualifiedMatchBand,
     Requirement,
@@ -83,6 +84,29 @@ def test_requirement_evidence_mapping_refuses_claimed_support_without_exact_fact
             relation=EvidenceRelation.DIRECT,
             reason_code="direct/validated_requirement",
         )
+
+
+def test_blocked_confidence_cannot_enter_the_focused_shortlist_at_any_score() -> None:
+    result = MatchAssessmentResult(
+        assessment_id="assessment-1",
+        job_revision_id="revision-1",
+        components=MatchScoreComponents(
+            role=20,
+            domain=20,
+            responsibility=20,
+            technical=10,
+            outcome=15,
+            seniority=10,
+            evidence=5,
+        ),
+        qualified_band=QualifiedMatchBand.STRONG,
+        confidence=ConfidenceState.BLOCKED,
+        hard_gates_pass=True,
+        current=True,
+    )
+
+    assert result.total_score == 100
+    assert result.focused_shortlist_eligible is False
 
 
 def test_component_score_caps_duplicate_evidence_at_its_fixed_maximum() -> None:
