@@ -6,7 +6,7 @@ from job_search_cockpit.phase2.assessment import (
 )
 from job_search_cockpit.phase2.types import ActivationCommand
 from tests.integration.test_phase2_activation import _service
-from tests.support.web import authenticated_test_app
+from tests.support.web import authenticated_test_app, build_test_app
 
 
 def test_assessment_publication_rejects_phase1_drift_after_authority_capture(
@@ -39,3 +39,13 @@ def test_assessment_view_is_authenticated_and_redacted_without_current_authority
     assert response.status_code == 200
     assert "Current match assessments are unavailable." in response.text
     assert "safe wording" not in response.text.lower()
+
+
+def test_assessment_view_rejects_a_request_without_the_local_launch_session(
+    vault_settings,
+) -> None:
+    with build_test_app(vault_settings) as (_, client):
+        response = client.get("/phase-2/assessments")
+
+    assert response.status_code == 401
+    assert "Launch session required." in response.text
