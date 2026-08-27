@@ -138,6 +138,16 @@ class MatchAssessmentResult:
     def __post_init__(self) -> None:
         if not self.assessment_id.strip() or not self.job_revision_id.strip():
             raise ValueError("assessment and job revision IDs are required")
+        minimum_score = {
+            QualifiedMatchBand.STRONG: 85,
+            QualifiedMatchBand.WORTHWHILE: 70,
+            QualifiedMatchBand.WORTHWHILE_WITH_REQUIRED_GAP: 70,
+        }.get(self.qualified_band)
+        if minimum_score is not None and self.total_score < minimum_score:
+            raise ValueError(
+                f"{self.qualified_band.value.replace('_', ' ')} band requires a raw score "
+                f"of at least {minimum_score}"
+            )
 
     @property
     def total_score(self) -> int:

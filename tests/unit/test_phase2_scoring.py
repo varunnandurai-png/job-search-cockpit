@@ -111,6 +111,27 @@ def test_blocked_confidence_cannot_enter_the_focused_shortlist_at_any_score() ->
     assert result.focused_shortlist_eligible is False
 
 
+def test_match_result_rejects_a_strong_band_below_the_strong_score_floor() -> None:
+    with pytest.raises(ValueError, match="strong band requires a raw score of at least 85"):
+        MatchAssessmentResult(
+            assessment_id="assessment-1",
+            job_revision_id="revision-1",
+            components=MatchScoreComponents(
+                role=20,
+                domain=20,
+                responsibility=20,
+                technical=10,
+                outcome=10,
+                seniority=0,
+                evidence=0,
+            ),
+            qualified_band=QualifiedMatchBand.STRONG,
+            confidence=ConfidenceState.HIGH,
+            hard_gates_pass=True,
+            current=True,
+        )
+
+
 def test_component_score_caps_duplicate_evidence_at_its_fixed_maximum() -> None:
     score = calculate_component_score(
         20,
