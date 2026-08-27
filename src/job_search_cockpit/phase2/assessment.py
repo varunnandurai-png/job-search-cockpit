@@ -18,6 +18,7 @@ from job_search_cockpit.phase2.assessment_types import (
     RequirementEvidenceMapping,
     RequirementKind,
     ScoringComponent,
+    resolve_qualified_match_band,
 )
 from job_search_cockpit.phase2.requirements import build_requirement_ledger
 from job_search_cockpit.phase2.types import (
@@ -178,15 +179,13 @@ class QualifiedBandInputs:
 
 
 def qualified_match_band(inputs: QualifiedBandInputs) -> QualifiedMatchBand:
-    if inputs.raw_score < 55 or not inputs.meaningful_role_and_responsibility:
-        return QualifiedMatchBand.WEAK
-    if inputs.raw_score < 70 or not inputs.worthwhile_structure:
-        return QualifiedMatchBand.EXPLORATORY
-    if inputs.unsupported_required:
-        return QualifiedMatchBand.WORTHWHILE_WITH_REQUIRED_GAP
-    if inputs.raw_score >= 85 and inputs.all_critical_floors_pass:
-        return QualifiedMatchBand.STRONG
-    return QualifiedMatchBand.WORTHWHILE
+    return resolve_qualified_match_band(
+        raw_score=inputs.raw_score,
+        meaningful_role_and_responsibility=inputs.meaningful_role_and_responsibility,
+        worthwhile_structure=inputs.worthwhile_structure,
+        unsupported_required=inputs.unsupported_required,
+        all_critical_floors_pass=inputs.all_critical_floors_pass,
+    )
 
 
 @dataclass(frozen=True, slots=True)

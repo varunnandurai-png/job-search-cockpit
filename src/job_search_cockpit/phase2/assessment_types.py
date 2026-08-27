@@ -151,6 +151,25 @@ class RequirementEvidenceMapping:
             raise ValueError("claimed support requires exact Phase I fact identifiers")
 
 
+def resolve_qualified_match_band(
+    *,
+    raw_score: int,
+    meaningful_role_and_responsibility: bool,
+    worthwhile_structure: bool,
+    unsupported_required: bool,
+    all_critical_floors_pass: bool,
+) -> QualifiedMatchBand:
+    if raw_score < 55 or not meaningful_role_and_responsibility:
+        return QualifiedMatchBand.WEAK
+    if raw_score < 70 or not worthwhile_structure:
+        return QualifiedMatchBand.EXPLORATORY
+    if unsupported_required:
+        return QualifiedMatchBand.WORTHWHILE_WITH_REQUIRED_GAP
+    if raw_score >= 85 and all_critical_floors_pass:
+        return QualifiedMatchBand.STRONG
+    return QualifiedMatchBand.WORTHWHILE
+
+
 @dataclass(frozen=True, slots=True)
 class MatchAssessmentResult:
     """An immutable numeric result whose shortlist eligibility remains fail-closed."""
@@ -163,6 +182,9 @@ class MatchAssessmentResult:
     hard_gates_pass: bool
     current: bool
     critical_floors_pass: bool
+    meaningful_role_and_responsibility: bool
+    worthwhile_structure: bool
+    unsupported_required: bool
 
     def __post_init__(self) -> None:
         if not self.assessment_id.strip() or not self.job_revision_id.strip():
@@ -179,6 +201,14 @@ class MatchAssessmentResult:
             )
         if self.qualified_band is QualifiedMatchBand.STRONG and not self.critical_floors_pass:
             raise ValueError("strong band requires all critical component floors")
+        if self.qualified_band is not resolve_qualified_match_band(
+            raw_score=self.total_score,
+            meaningful_role_and_responsibility=self.meaningful_role_and_responsibility,
+            worthwhile_structure=self.worthwhile_structure,
+            unsupported_required=self.unsupported_required,
+            all_critical_floors_pass=self.critical_floors_pass,
+        ):
+            raise ValueError("qualified band does not match its score inputs")
 
     @property
     def total_score(self) -> int:
