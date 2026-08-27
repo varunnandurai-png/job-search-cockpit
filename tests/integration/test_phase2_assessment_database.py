@@ -39,6 +39,10 @@ def test_match_assessment_schema_is_append_only_and_avoids_sensitive_text(
         "qualified_band",
         "assessment_state",
         "coverage_ledger_fingerprint",
+        "critical_floors_pass",
+        "meaningful_role_and_responsibility",
+        "worthwhile_structure",
+        "unsupported_required",
     } <= columns
     assert not {
         "public_description",

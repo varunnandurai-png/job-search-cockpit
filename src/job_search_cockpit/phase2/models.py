@@ -478,6 +478,14 @@ class Phase2MatchAssessment(AssessmentAuthorityFence, Phase2Base):
     qualified_band: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="unbound"
     )
+    critical_floors_pass: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="0"
+    )
+    meaningful_role_and_responsibility: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="0"
+    )
+    worthwhile_structure: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    unsupported_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     confidence: Mapped[str] = mapped_column(String(16))
     assessment_state: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="unbound"
