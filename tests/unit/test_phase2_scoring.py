@@ -7,6 +7,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
 )
 from job_search_cockpit.phase2.assessment import (
     AssessmentEvidenceService,
+    AssessmentPublicationCommand,
     AssessmentUnavailable,
     ComponentContribution,
     ComponentRequirement,
@@ -151,6 +152,51 @@ def test_score_requirement_rejects_a_mapping_for_a_different_requirement() -> No
             ScoringComponent.ROLE,
             mapping,
         )
+
+
+def test_publication_command_rejects_a_mapping_without_a_published_requirement() -> None:
+    requirement = Requirement(
+        requirement_id="requirements.product-role",
+        kind=RequirementKind.REQUIRED,
+        component=ScoringComponent.ROLE,
+        source_span_id="span-1",
+        start_offset=0,
+        end_offset=12,
+    )
+    command = AssessmentPublicationCommand(
+        result=MatchAssessmentResult(
+            assessment_id="assessment-1",
+            job_revision_id="revision-1",
+            components=MatchScoreComponents(20, 20, 20, 10, 15, 10, 5),
+            qualified_band=QualifiedMatchBand.STRONG,
+            confidence=ConfidenceState.HIGH,
+            hard_gates_pass=True,
+            current=True,
+            critical_floors_pass=True,
+            meaningful_role_and_responsibility=True,
+            worthwhile_structure=True,
+            unsupported_required=False,
+        ),
+        requirements=(requirement,),
+        mappings=(
+            RequirementEvidenceMapping(
+                requirement_id="requirements.other-role",
+                relation=EvidenceRelation.NONE,
+                reason_code="none/no_approved_evidence_found",
+            ),
+        ),
+        gate_result=GateResult.PASS,
+        gate_reason_codes=("eligible_role",),
+        location_paths=(),
+        rubric_version="rubric-v1",
+        coverage_ledger_fingerprint="a" * 64,
+        fact_set_fingerprint="b" * 64,
+        assessment_state="stable",
+        shortlist_reason_codes=("qualified_match",),
+    )
+
+    with pytest.raises(ValueError, match="published requirement"):
+        command.validate()
 
 
 def test_blocked_confidence_cannot_enter_the_focused_shortlist_at_any_score() -> None:

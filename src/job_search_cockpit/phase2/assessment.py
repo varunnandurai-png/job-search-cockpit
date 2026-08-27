@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -13,8 +14,12 @@ from job_search_cockpit.phase2.assessment_types import (
     ComponentAnchor,
     ConfidenceState,
     EvidenceRelation,
+    GateResult,
+    LocationEligibilityPath,
+    MatchAssessmentResult,
     MatchScoreComponents,
     QualifiedMatchBand,
+    Requirement,
     RequirementEvidenceMapping,
     RequirementKind,
     ScoringComponent,
@@ -31,6 +36,50 @@ from job_search_cockpit.ports import Phase1MatchingPort
 
 class AssessmentUnavailable(ValueError):
     """Raised when an assessment cannot use current approved Phase I evidence."""
+
+
+@dataclass(frozen=True, slots=True)
+class AssessmentPublicationCommand:
+    """Opaque, locally validated metadata for one append-only match assessment."""
+
+    result: MatchAssessmentResult
+    requirements: tuple[Requirement, ...]
+    mappings: tuple[RequirementEvidenceMapping, ...]
+    gate_result: GateResult
+    gate_reason_codes: tuple[str, ...]
+    location_paths: tuple[LocationEligibilityPath, ...]
+    rubric_version: str
+    coverage_ledger_fingerprint: str
+    fact_set_fingerprint: str
+    assessment_state: str
+    shortlist_reason_codes: tuple[str, ...]
+
+    def validate(self) -> None:
+        if not self.rubric_version.strip():
+            raise ValueError("assessment rubric version is required")
+        if self.assessment_state not in {"stable", "adjudicated"}:
+            raise ValueError("assessment state is not publishable")
+        if any(
+            re.fullmatch(r"[a-f0-9]{64}", fingerprint) is None
+            for fingerprint in (
+                self.coverage_ledger_fingerprint,
+                self.fact_set_fingerprint,
+            )
+        ):
+            raise ValueError("assessment fingerprints must be SHA-256 hex digests")
+        if any(
+            re.fullmatch(r"[a-z][a-z0-9_/-]{0,119}", code) is None
+            for code in (*self.gate_reason_codes, *self.shortlist_reason_codes)
+        ):
+            raise ValueError("assessment reason codes must be bounded")
+        requirement_ids = tuple(requirement.requirement_id for requirement in self.requirements)
+        if not requirement_ids or len(set(requirement_ids)) != len(requirement_ids):
+            raise ValueError("published requirements must be unique")
+        mapping_ids = tuple(mapping.requirement_id for mapping in self.mappings)
+        if set(mapping_ids) - set(requirement_ids):
+            raise ValueError("publication mapping must reference a published requirement")
+        if set(mapping_ids) != set(requirement_ids) or len(set(mapping_ids)) != len(mapping_ids):
+            raise ValueError("every published requirement needs one evidence mapping")
 
 
 @dataclass(frozen=True, slots=True)
