@@ -23,6 +23,38 @@ class Phase2Base(DeclarativeBase):
     type_annotation_map: ClassVar[dict[Any, Any]] = {dict[str, object]: JSON}
 
 
+class AssessmentAuthorityFence:
+    """Generation snapshots required before an assessment can be treated as current."""
+
+    phase1_profile_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="unbound"
+    )
+    phase1_profile_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="-1"
+    )
+    phase1_readiness_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="unbound"
+    )
+    phase1_readiness_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="-1"
+    )
+    phase1_authority_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="unbound"
+    )
+    phase1_authority_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="-1"
+    )
+    phase1_restore_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="-1"
+    )
+    phase2_activation_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="-1"
+    )
+    phase2_restore_generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="-1"
+    )
+
+
 class Phase2AuthorityState(Phase2Base):
     __tablename__ = "phase2_authority_state"
     __table_args__ = (CheckConstraint("id = 1", name="ck_phase2_authority_singleton"),)
@@ -406,7 +438,7 @@ class Phase2JobVerification(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class Phase2JobGateAssessment(Phase2Base):
+class Phase2JobGateAssessment(AssessmentAuthorityFence, Phase2Base):
     __tablename__ = "phase2_job_gate_assessments"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -417,7 +449,7 @@ class Phase2JobGateAssessment(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class Phase2LocationEligibilityPath(Phase2Base):
+class Phase2LocationEligibilityPath(AssessmentAuthorityFence, Phase2Base):
     __tablename__ = "phase2_location_eligibility_paths"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -430,7 +462,7 @@ class Phase2LocationEligibilityPath(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class Phase2MatchAssessment(Phase2Base):
+class Phase2MatchAssessment(AssessmentAuthorityFence, Phase2Base):
     __tablename__ = "phase2_match_assessments"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -445,7 +477,7 @@ class Phase2MatchAssessment(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class Phase2MatchComponent(Phase2Base):
+class Phase2MatchComponent(AssessmentAuthorityFence, Phase2Base):
     __tablename__ = "phase2_match_components"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -455,7 +487,7 @@ class Phase2MatchComponent(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class Phase2RequirementMapping(Phase2Base):
+class Phase2RequirementMapping(AssessmentAuthorityFence, Phase2Base):
     __tablename__ = "phase2_requirement_mappings"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -467,7 +499,7 @@ class Phase2RequirementMapping(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
-class Phase2ShortlistDecision(Phase2Base):
+class Phase2ShortlistDecision(AssessmentAuthorityFence, Phase2Base):
     __tablename__ = "phase2_shortlist_decisions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
