@@ -471,8 +471,17 @@ class Phase2MatchAssessment(AssessmentAuthorityFence, Phase2Base):
         ForeignKey("phase2_job_gate_assessments.id")
     )
     rubric_version: Mapped[str] = mapped_column(String(64))
+    coverage_ledger_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="unbound"
+    )
     total_score: Mapped[int] = mapped_column(Integer)
+    qualified_band: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="unbound"
+    )
     confidence: Mapped[str] = mapped_column(String(16))
+    assessment_state: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="unbound"
+    )
     fact_set_fingerprint: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

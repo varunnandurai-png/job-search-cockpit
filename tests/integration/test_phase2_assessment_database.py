@@ -35,6 +35,11 @@ def test_match_assessment_schema_is_append_only_and_avoids_sensitive_text(
         "phase2_shortlist_decisions",
     } <= tables
     assert {"job_revision_id", "rubric_version", "total_score", "fact_set_fingerprint"} <= columns
+    assert {
+        "qualified_band",
+        "assessment_state",
+        "coverage_ledger_fingerprint",
+    } <= columns
     assert not {
         "public_description",
         "safe_wording",
