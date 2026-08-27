@@ -15,6 +15,7 @@ from job_search_cockpit.phase2.assessment_types import (
     EvidenceRelation,
     MatchScoreComponents,
     QualifiedMatchBand,
+    RequirementEvidenceMapping,
     RequirementKind,
     ScoringComponent,
 )
@@ -254,11 +255,17 @@ class ScoreRequirement:
     requirement_id: str
     kind: RequirementKind
     component: ScoringComponent
-    relation: EvidenceRelation
+    mapping: RequirementEvidenceMapping
 
     def __post_init__(self) -> None:
         if not self.requirement_id.strip():
             raise ValueError("requirement ID is required")
+        if self.mapping.requirement_id != self.requirement_id:
+            raise ValueError("score requirement must bind its own requirement evidence mapping")
+
+    @property
+    def relation(self) -> EvidenceRelation:
+        return self.mapping.relation
 
 
 def component_anchor(requirements: tuple[ComponentRequirement, ...]) -> ComponentAnchor:

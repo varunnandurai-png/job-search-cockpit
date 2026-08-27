@@ -36,6 +36,34 @@ from job_search_cockpit.phase2.assessment_types import (
 )
 
 
+def _score_requirement(
+    requirement_id: str,
+    kind: RequirementKind,
+    component: ScoringComponent,
+    relation: EvidenceRelation,
+) -> ScoreRequirement:
+    identifiers = (
+        {}
+        if relation is EvidenceRelation.NONE
+        else {
+            "claim_id": f"claim-{requirement_id}",
+            "revision_id": f"revision-{requirement_id}",
+            "support_assertion_id": f"support-{requirement_id}",
+        }
+    )
+    return ScoreRequirement(
+        requirement_id,
+        kind,
+        component,
+        RequirementEvidenceMapping(
+            requirement_id=requirement_id,
+            relation=relation,
+            reason_code="validated_requirement",
+            **identifiers,
+        ),
+    )
+
+
 def test_match_score_components_total_the_approved_maximum() -> None:
     components = MatchScoreComponents(
         role=20,
@@ -85,6 +113,25 @@ def test_requirement_evidence_mapping_refuses_claimed_support_without_exact_fact
             requirement_id=requirement.requirement_id,
             relation=EvidenceRelation.DIRECT,
             reason_code="direct/validated_requirement",
+        )
+
+
+def test_score_requirement_rejects_a_mapping_for_a_different_requirement() -> None:
+    mapping = RequirementEvidenceMapping(
+        requirement_id="requirements.other-role",
+        relation=EvidenceRelation.DIRECT,
+        reason_code="direct/validated_requirement",
+        claim_id="claim-1",
+        revision_id="revision-1",
+        support_assertion_id="support-1",
+    )
+
+    with pytest.raises(ValueError, match="must bind its own requirement evidence mapping"):
+        ScoreRequirement(
+            "requirements.product-role",
+            RequirementKind.REQUIRED,
+            ScoringComponent.ROLE,
+            mapping,
         )
 
 
@@ -172,13 +219,13 @@ def test_component_score_caps_duplicate_evidence_at_its_fixed_maximum() -> None:
 def test_fixed_calculator_derives_component_points_from_locked_anchors() -> None:
     components = calculate_match_score(
         (
-            ScoreRequirement(
+            _score_requirement(
                 "role.one", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
             ),
-            ScoreRequirement(
+            _score_requirement(
                 "role.two", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
             ),
-            ScoreRequirement(
+            _score_requirement(
                 "responsibility.one",
                 RequirementKind.MATERIAL_RESPONSIBILITY,
                 ScoringComponent.RESPONSIBILITY,
@@ -195,10 +242,10 @@ def test_fixed_calculator_derives_component_points_from_locked_anchors() -> None
 def test_fixed_calculator_does_not_promote_duplicate_requirement_to_close_anchor() -> None:
     components = calculate_match_score(
         (
-            ScoreRequirement(
+            _score_requirement(
                 "role.one", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
             ),
-            ScoreRequirement(
+            _score_requirement(
                 "role.one", RequirementKind.REQUIRED, ScoringComponent.ROLE, EvidenceRelation.DIRECT
             ),
         )
