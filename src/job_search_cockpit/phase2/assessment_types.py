@@ -187,8 +187,11 @@ class MatchAssessmentResult:
     unsupported_required: bool
 
     def __post_init__(self) -> None:
-        if not self.assessment_id.strip() or not self.job_revision_id.strip():
-            raise ValueError("assessment and job revision IDs are required")
+        if not all(
+            1 <= len(identifier.strip()) <= 36
+            for identifier in (self.assessment_id, self.job_revision_id)
+        ):
+            raise ValueError("assessment and job revision IDs must fit persisted metadata")
         minimum_score = {
             QualifiedMatchBand.STRONG: 85,
             QualifiedMatchBand.WORTHWHILE: 70,

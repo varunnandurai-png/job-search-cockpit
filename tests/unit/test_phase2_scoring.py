@@ -98,6 +98,25 @@ def test_match_score_components_reject_a_component_above_its_approved_maximum() 
         )
 
 
+def test_match_result_rejects_an_identifier_too_large_to_persist() -> None:
+    with pytest.raises(
+        ValueError, match="assessment and job revision IDs must fit persisted metadata"
+    ):
+        MatchAssessmentResult(
+            assessment_id="a" * 37,
+            job_revision_id="revision-1",
+            components=MatchScoreComponents(20, 20, 20, 10, 15, 10, 5),
+            qualified_band=QualifiedMatchBand.STRONG,
+            confidence=ConfidenceState.HIGH,
+            hard_gates_pass=True,
+            current=True,
+            critical_floors_pass=True,
+            meaningful_role_and_responsibility=True,
+            worthwhile_structure=True,
+            unsupported_required=False,
+        )
+
+
 def test_assessment_states_are_bounded_to_the_approved_vocabulary() -> None:
     assert GateResult.PASS.value == "pass"
     assert RequirementKind.REQUIRED.value == "required"
@@ -196,6 +215,51 @@ def test_publication_command_rejects_a_mapping_without_a_published_requirement()
     )
 
     with pytest.raises(ValueError, match="published requirement"):
+        command.validate()
+
+
+def test_publication_command_rejects_a_rubric_version_too_large_to_persist() -> None:
+    requirement = Requirement(
+        requirement_id="requirements.product-role",
+        kind=RequirementKind.REQUIRED,
+        component=ScoringComponent.ROLE,
+        source_span_id="span-1",
+        start_offset=0,
+        end_offset=12,
+    )
+    command = AssessmentPublicationCommand(
+        result=MatchAssessmentResult(
+            assessment_id="assessment-1",
+            job_revision_id="revision-1",
+            components=MatchScoreComponents(20, 20, 20, 10, 15, 10, 5),
+            qualified_band=QualifiedMatchBand.STRONG,
+            confidence=ConfidenceState.HIGH,
+            hard_gates_pass=True,
+            current=True,
+            critical_floors_pass=True,
+            meaningful_role_and_responsibility=True,
+            worthwhile_structure=True,
+            unsupported_required=False,
+        ),
+        requirements=(requirement,),
+        mappings=(
+            RequirementEvidenceMapping(
+                requirement_id=requirement.requirement_id,
+                relation=EvidenceRelation.NONE,
+                reason_code="none/no_approved_evidence_found",
+            ),
+        ),
+        gate_result=GateResult.PASS,
+        gate_reason_codes=("eligible_role",),
+        location_paths=(),
+        rubric_version="r" * 65,
+        coverage_ledger_fingerprint="a" * 64,
+        fact_set_fingerprint="b" * 64,
+        assessment_state="stable",
+        shortlist_reason_codes=("qualified_match",),
+    )
+
+    with pytest.raises(ValueError, match="rubric version must fit persisted metadata"):
         command.validate()
 
 

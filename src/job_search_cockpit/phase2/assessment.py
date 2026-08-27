@@ -1,6 +1,10 @@
 import re
 from dataclasses import dataclass
 from fractions import Fraction
+from hashlib import sha256
+from uuid import uuid4
+
+from sqlalchemy.orm import Session
 
 from job_search_cockpit.phase1_contract.service import Phase1ContractUnavailable
 from job_search_cockpit.phase1_contract.snapshots import (
@@ -25,6 +29,16 @@ from job_search_cockpit.phase2.assessment_types import (
     ScoringComponent,
     resolve_qualified_match_band,
 )
+from job_search_cockpit.phase2.models import (
+    Phase2JobGateAssessment,
+    Phase2JobRevision,
+    Phase2LocationEligibilityPath,
+    Phase2MatchAssessment,
+    Phase2MatchComponent,
+    Phase2RequirementMapping,
+    Phase2ShortlistDecision,
+)
+from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
 from job_search_cockpit.phase2.requirements import build_requirement_ledger
 from job_search_cockpit.phase2.types import (
     Phase2Action,
@@ -55,8 +69,8 @@ class AssessmentPublicationCommand:
     shortlist_reason_codes: tuple[str, ...]
 
     def validate(self) -> None:
-        if not self.rubric_version.strip():
-            raise ValueError("assessment rubric version is required")
+        if not 1 <= len(self.rubric_version.strip()) <= 64:
+            raise ValueError("assessment rubric version must fit persisted metadata")
         if self.assessment_state not in {"stable", "adjudicated"}:
             raise ValueError("assessment state is not publishable")
         if any(
@@ -136,6 +150,127 @@ class AssessmentAuthorityService:
         if current.persistence_fields() != expected.persistence_fields():
             raise AssessmentUnavailable("Assessment authority changed before publication.")
         return current
+
+
+class AssessmentPublicationService:
+    """Persists a fully validated local assessment only behind a fresh authority fence."""
+
+    def __init__(
+        self,
+        authority_service: AssessmentAuthorityService,
+        coordinator: Phase2MutationCoordinator,
+    ) -> None:
+        self._authority_service = authority_service
+        self._coordinator = coordinator
+
+    def publish(self, command: AssessmentPublicationCommand) -> str:
+        expected = self._authority_service.capture_for_assessment()
+        self._authority_service.revalidate_before_publication(expected)
+        command.validate()
+
+        def insert(session: Session) -> str:
+            current = self._authority_service.revalidate_before_publication(expected)
+            command.validate()
+            if session.get(Phase2JobRevision, command.result.job_revision_id) is None:
+                raise AssessmentUnavailable("Assessment job revision is unavailable.")
+            fields = current.persistence_fields()
+            gate_id = str(uuid4())
+            session.add(
+                Phase2JobGateAssessment(
+                    id=gate_id,
+                    job_revision_id=command.result.job_revision_id,
+                    profile_fingerprint=current.phase1_inputs.profile.fingerprint,
+                    result=command.gate_result.value,
+                    reason_codes_json=list(command.gate_reason_codes),
+                    **fields,
+                )
+            )
+            for path in command.location_paths:
+                session.add(
+                    Phase2LocationEligibilityPath(
+                        id=str(uuid4()),
+                        job_gate_assessment_id=gate_id,
+                        location_fingerprint=sha256(path.location_id.encode()).hexdigest(),
+                        result=path.result.value,
+                        reason_codes_json=list(path.reason_codes),
+                        **fields,
+                    )
+                )
+            assessment_id = command.result.assessment_id
+            session.add(
+                Phase2MatchAssessment(
+                    id=assessment_id,
+                    job_revision_id=command.result.job_revision_id,
+                    job_gate_assessment_id=gate_id,
+                    rubric_version=command.rubric_version,
+                    coverage_ledger_fingerprint=command.coverage_ledger_fingerprint,
+                    total_score=command.result.total_score,
+                    qualified_band=command.result.qualified_band.value,
+                    critical_floors_pass=command.result.critical_floors_pass,
+                    meaningful_role_and_responsibility=command.result.meaningful_role_and_responsibility,
+                    worthwhile_structure=command.result.worthwhile_structure,
+                    unsupported_required=command.result.unsupported_required,
+                    confidence=command.result.confidence.value,
+                    assessment_state=command.assessment_state,
+                    fact_set_fingerprint=command.fact_set_fingerprint,
+                    **fields,
+                )
+            )
+            for component, score in (
+                (ScoringComponent.ROLE, command.result.components.role),
+                (ScoringComponent.DOMAIN, command.result.components.domain),
+                (ScoringComponent.RESPONSIBILITY, command.result.components.responsibility),
+                (ScoringComponent.OUTCOME, command.result.components.outcome),
+                (ScoringComponent.TECHNICAL, command.result.components.technical),
+                (ScoringComponent.SENIORITY, command.result.components.seniority),
+                (ScoringComponent.EVIDENCE, command.result.components.evidence),
+            ):
+                session.add(
+                    Phase2MatchComponent(
+                        id=str(uuid4()),
+                        match_assessment_id=assessment_id,
+                        component=component.value,
+                        score=score,
+                        **fields,
+                    )
+                )
+            requirements = {
+                requirement.requirement_id: requirement for requirement in command.requirements
+            }
+            for mapping in command.mappings:
+                requirement = requirements[mapping.requirement_id]
+                session.add(
+                    Phase2RequirementMapping(
+                        id=str(uuid4()),
+                        match_assessment_id=assessment_id,
+                        requirement_id=requirement.requirement_id,
+                        requirement_kind=requirement.kind.value,
+                        component=requirement.component.value,
+                        source_span_id=requirement.source_span_id,
+                        source_start_offset=requirement.start_offset,
+                        source_end_offset=requirement.end_offset,
+                        claim_id=mapping.claim_id,
+                        fact_revision_id=mapping.revision_id,
+                        support_assertion_id=mapping.support_assertion_id,
+                        relation=mapping.relation.value,
+                        reason_code=mapping.reason_code,
+                        **fields,
+                    )
+                )
+            session.add(
+                Phase2ShortlistDecision(
+                    id=str(uuid4()),
+                    match_assessment_id=assessment_id,
+                    decision=(
+                        "focused" if command.result.focused_shortlist_eligible else "not_focused"
+                    ),
+                    reason_codes_json=list(command.shortlist_reason_codes),
+                    **fields,
+                )
+            )
+            return assessment_id
+
+        return self._coordinator.run(insert, "publish_match_assessment")
 
 
 class AssessmentEvidenceService:
