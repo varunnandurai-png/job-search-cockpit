@@ -112,6 +112,8 @@ class AssessmentEvidenceService:
             raise AssessmentUnavailable("Assessment matching fact set changed.")
         if snapshot.requirement_ids != requirement_ids or not snapshot.complete:
             raise AssessmentUnavailable("Assessment matching fact set is incomplete.")
+        if len({fact.requirement_id for fact in snapshot.facts}) != len(snapshot.facts):
+            raise AssessmentUnavailable("Assessment matching fact set is malformed.")
         if any(
             fact.requirement_id not in requirement_ids
             or not all(

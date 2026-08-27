@@ -207,6 +207,38 @@ def test_matching_fact_set_drift_blocks_scoring_evidence() -> None:
         service.require_complete_matching_facts(("role.product",))
 
 
+def test_matching_fact_set_rejects_duplicate_evidence_for_one_requirement() -> None:
+    snapshot = Phase1MatchingFactSetSnapshot(
+        requirement_ids=("role.product",),
+        facts=(
+            Phase1MatchingFactSnapshot(
+                requirement_id="role.product",
+                claim_id="claim-1",
+                revision_id="revision-1",
+                support_assertion_id="support-1",
+            ),
+            Phase1MatchingFactSnapshot(
+                requirement_id="role.product",
+                claim_id="claim-2",
+                revision_id="revision-2",
+                support_assertion_id="support-2",
+            ),
+        ),
+        profile_fingerprint="a" * 64,
+        profile_generation=1,
+        readiness_fingerprint="b" * 64,
+        readiness_generation=1,
+        authority_fingerprint="c" * 64,
+        authority_generation=1,
+        restore_generation=0,
+        fingerprint="d" * 64,
+    )
+    service = AssessmentEvidenceService(_StableMatchingFactSetPort(snapshot))
+
+    with pytest.raises(AssessmentUnavailable, match="matching fact set is malformed"):
+        service.require_complete_matching_facts(("role.product",))
+
+
 class _ProjectionPort:
     def __init__(self, projection: Phase1ResumeFactProjection) -> None:
         self.projection = projection
@@ -231,3 +263,10 @@ class _MatchingFactSetPort:
         self, expected: Phase1MatchingFactSetSnapshot
     ) -> Phase1MatchingFactSetSnapshot:
         return expected.model_copy(update={"fingerprint": "e" * 64})
+
+
+class _StableMatchingFactSetPort(_MatchingFactSetPort):
+    def revalidate_matching_fact_set(
+        self, expected: Phase1MatchingFactSetSnapshot
+    ) -> Phase1MatchingFactSetSnapshot:
+        return expected
