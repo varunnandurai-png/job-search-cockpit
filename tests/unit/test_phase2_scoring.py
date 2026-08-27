@@ -58,7 +58,13 @@ def _score_requirement(
         RequirementEvidenceMapping(
             requirement_id=requirement_id,
             relation=relation,
-            reason_code="validated_requirement",
+            reason_code=(
+                "none/no_approved_evidence_found"
+                if relation is EvidenceRelation.NONE
+                else "direct/exact_capability_performed"
+                if relation is EvidenceRelation.DIRECT
+                else "adjacent/approved_taxonomy_neighbor"
+            ),
             **identifiers,
         ),
     )
@@ -112,7 +118,19 @@ def test_requirement_evidence_mapping_refuses_claimed_support_without_exact_fact
         RequirementEvidenceMapping(
             requirement_id=requirement.requirement_id,
             relation=EvidenceRelation.DIRECT,
-            reason_code="direct/validated_requirement",
+                reason_code="direct/exact_capability_performed",
+        )
+
+
+def test_requirement_evidence_mapping_rejects_an_unlisted_reason_code() -> None:
+    with pytest.raises(ValueError, match="mapping reason code is not approved"):
+        RequirementEvidenceMapping(
+            requirement_id="requirements.product-role",
+            relation=EvidenceRelation.DIRECT,
+            reason_code="direct/unverified_claim",
+            claim_id="claim-1",
+            revision_id="revision-1",
+            support_assertion_id="support-1",
         )
 
 
@@ -120,7 +138,7 @@ def test_score_requirement_rejects_a_mapping_for_a_different_requirement() -> No
     mapping = RequirementEvidenceMapping(
         requirement_id="requirements.other-role",
         relation=EvidenceRelation.DIRECT,
-        reason_code="direct/validated_requirement",
+        reason_code="direct/exact_capability_performed",
         claim_id="claim-1",
         revision_id="revision-1",
         support_assertion_id="support-1",

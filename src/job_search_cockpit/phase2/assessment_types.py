@@ -27,6 +27,32 @@ class EvidenceRelation(StrEnum):
     NONE = "none"
 
 
+_MAPPING_REASON_CODES = {
+    EvidenceRelation.DIRECT: frozenset(
+        {
+            "direct/exact_capability_performed",
+            "direct/exact_domain_experience",
+            "direct/exact_technical_object_used",
+            "direct/numeric_minimum_met",
+            "direct/outcome_or_scale_met",
+        }
+    ),
+    EvidenceRelation.ADJACENT: frozenset(
+        {
+            "adjacent/same_capability_lower_ownership",
+            "adjacent/approved_taxonomy_neighbor",
+            "adjacent/numeric_near_minimum",
+            "adjacent/scale_near_minimum",
+        }
+    ),
+    EvidenceRelation.NONE: frozenset(
+        {
+            "none/no_approved_evidence_found",
+            "none/incomparable_or_ambiguous",
+        }
+    ),
+}
+
 class ConfidenceState(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
@@ -114,6 +140,8 @@ class RequirementEvidenceMapping:
             raise ValueError("requirement ID must be canonical")
         if re.fullmatch(r"[a-z][a-z0-9_/-]{0,119}", self.reason_code) is None:
             raise ValueError("mapping reason code must be bounded")
+        if self.reason_code not in _MAPPING_REASON_CODES[self.relation]:
+            raise ValueError("mapping reason code is not approved for its evidence relation")
         identifiers = (self.claim_id, self.revision_id, self.support_assertion_id)
         if self.relation is EvidenceRelation.NONE:
             if any(identifier is not None for identifier in identifiers):
