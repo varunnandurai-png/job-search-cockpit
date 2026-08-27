@@ -28,6 +28,7 @@ class ApprovedProviderInstance:
     parser_version: str
     max_response_bytes: int
     min_request_interval_seconds: int
+    content_types: tuple[str, ...] = ("application/json",)
 
     def __post_init__(self) -> None:
         if not self.instance_id.strip() or not self.employer_identity.strip():
@@ -40,6 +41,10 @@ class ApprovedProviderInstance:
             raise ValueError("provider instance path prefixes must be absolute")
         if not self.parser_version.strip():
             raise ValueError("provider instance requires a parser version")
+        if not self.content_types or len(set(self.content_types)) != len(self.content_types):
+            raise ValueError("provider instance requires exact content types")
+        if any(not _is_exact_content_type(content_type) for content_type in self.content_types):
+            raise ValueError("provider instance requires exact content types")
         if not 1 <= self.max_response_bytes <= 2_000_000:
             raise ValueError("provider response size is outside the approved bounds")
         if not 1 <= self.min_request_interval_seconds <= 86_400:
@@ -96,6 +101,20 @@ def _is_exact_host(host: str) -> bool:
             part and part.replace("-", "").isalnum() for part in host.split(".")
         )
     return False
+
+
+def _is_exact_content_type(content_type: str) -> bool:
+    if (
+        content_type != content_type.lower()
+        or content_type.count("/") != 1
+        or "*" in content_type
+    ):
+        return False
+    type_name, subtype = content_type.split("/", 1)
+    token_characters = frozenset("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz")
+    return bool(type_name) and bool(subtype) and all(
+        character in token_characters for character in type_name + subtype
+    )
 
 
 __all__ = [

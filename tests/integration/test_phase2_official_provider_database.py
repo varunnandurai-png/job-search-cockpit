@@ -34,6 +34,7 @@ def test_official_provider_instance_schema_is_append_only_and_has_no_secret_colu
         "phase2_provider_instance_health_events",
     } <= tables
     assert "approval_fingerprint" in columns
+    assert "content_types_json" in columns
     assert not columns & {"token", "key", "cookie", "authorization", "raw_html"}
     assert "prevent_phase2_provider_instance_approvals_update" in triggers
     assert "prevent_phase2_provider_instance_approvals_delete" in triggers
