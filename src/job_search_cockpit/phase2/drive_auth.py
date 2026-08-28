@@ -15,8 +15,8 @@ _AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 _TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 _DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 _STATE_TTL_SECONDS = 300.0
-_KEYCHAIN_SERVICE = "job-search-cockpit.private-drive-backup"
-_KEYCHAIN_ACCOUNT = "refresh-token"
+_KEYCHAIN_SERVICE = "com.job-search-cockpit.google-drive"
+_KEYCHAIN_ACCOUNT = "drive.file"
 
 
 class DriveAuthorizationError(ValueError):

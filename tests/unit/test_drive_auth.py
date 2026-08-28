@@ -46,6 +46,8 @@ def test_keychain_write_passes_refresh_token_on_stdin_not_argv() -> None:
     assert "refresh-secret" not in command
     assert supplied_input == "refresh-secret\n"
     assert command[-1] == "-w"
+    assert "com.job-search-cockpit.google-drive" in command
+    assert "drive.file" in command
 
 
 def test_callback_state_is_one_use_short_lived_and_session_bound() -> None:
