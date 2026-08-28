@@ -1,13 +1,19 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from hashlib import sha256
+from typing import Literal
+from urllib.parse import urlsplit
 
 import httpx
+
+from job_search_cockpit.phase2.finalisation import LocalResumeFinalisationService
 
 _DRIVE_API_HOST = "www.googleapis.com"
 _GENERATE_IDS_URL = "https://www.googleapis.com/drive/v3/files/generateIds"
 _FILES_URL = "https://www.googleapis.com/drive/v3/files"
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _FOLDER_NAME = "Job Search Cockpit"
+_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
 
 
 class DriveApiError(ValueError):
@@ -30,8 +36,13 @@ class DriveFileMetadata:
 class DriveApiClient:
     """Makes only fixed, fail-closed Drive API requests."""
 
-    def __init__(self, http_client: httpx.Client) -> None:
+    def __init__(
+        self,
+        http_client: httpx.Client,
+        finalisation_service: LocalResumeFinalisationService,
+    ) -> None:
         self._http_client = http_client
+        self._finalisation_service = finalisation_service
 
     def generate_ids(
         self, access_token: str, count: int, *, before_request: Callable[[], None]
@@ -86,6 +97,70 @@ class DriveApiClient:
         ):
             raise DriveApiError("Google Drive did not verify the private folder.")
         return folder
+
+    def upload_verified_file(
+        self,
+        *,
+        access_token: str,
+        file_id: str,
+        folder_id: str,
+        final_artifact_id: str,
+        file_kind: Literal["docx", "pdf"],
+        before_request: Callable[[], None],
+    ) -> DriveFileMetadata:
+        artifact = self._finalisation_service.artifact_by_id(final_artifact_id)
+        if file_kind == "docx":
+            path, size, checksum = (
+                artifact.docx_path,
+                artifact.docx_byte_length,
+                artifact.docx_sha256,
+            )
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            path, size, checksum = artifact.pdf_path, artifact.pdf_byte_length, artifact.pdf_sha256
+            mime_type = "application/pdf"
+        if (
+            not path.is_file()
+            or path.stat().st_size != size
+            or sha256(path.read_bytes()).hexdigest() != checksum
+            or not 1 <= len(file_id) <= 255
+            or not 1 <= len(folder_id) <= 255
+        ):
+            raise DriveApiError("The verified final résumé file is unavailable.")
+        before_request()
+        initiated = self._http_client.post(
+            _UPLOAD_URL,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "X-Upload-Content-Type": mime_type,
+                "X-Upload-Content-Length": str(size),
+            },
+            json={"id": file_id, "name": path.name, "mimeType": mime_type, "parents": [folder_id]},
+        )
+        session_url = initiated.headers.get("Location") if initiated.status_code == 200 else ""
+        parsed = urlsplit(session_url)
+        if parsed.scheme != "https" or parsed.hostname != _DRIVE_API_HOST:
+            raise DriveApiError("Google Drive did not provide a valid upload session.")
+        before_request()
+        uploaded = self._http_client.put(
+            session_url,
+            headers={"Content-Type": mime_type, "Content-Length": str(size)},
+            content=path.read_bytes(),
+        )
+        metadata = self._metadata(uploaded, "Google Drive did not verify the final résumé file.")
+        if (
+            metadata.id != file_id
+            or metadata.name != path.name
+            or metadata.mime_type != mime_type
+            or metadata.parents != (folder_id,)
+            or metadata.size != size
+            or metadata.sha256 != checksum
+            or metadata.trashed
+            or metadata.shared
+            or not metadata.app_authorized
+        ):
+            raise DriveApiError("Google Drive did not verify the final résumé file.")
+        return metadata
 
     @staticmethod
     def _metadata(response: httpx.Response, failure: str) -> DriveFileMetadata:
