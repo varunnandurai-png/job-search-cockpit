@@ -8,7 +8,10 @@ from threading import RLock
 from time import monotonic
 from urllib.parse import urlencode, urlsplit
 
+import httpx
+
 _AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 _DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 _STATE_TTL_SECONDS = 300.0
 _KEYCHAIN_SERVICE = "job-search-cockpit.private-drive-backup"
@@ -38,10 +41,20 @@ class _PendingAuthorization:
 class DriveAuthorizationService:
     """Creates one-use, session-bound Google OAuth requests without contacting Google."""
 
-    def __init__(self, *, client_id: str) -> None:
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        http_client: httpx.Client | None = None,
+        credential_store: "MacOSKeychainCredentialStore | None" = None,
+    ) -> None:
         if not client_id.strip() or len(client_id) > 240:
             raise ValueError("The Google desktop client ID is invalid.")
         self._client_id = client_id
+        self._http_client = http_client or httpx.Client(
+            follow_redirects=False, timeout=httpx.Timeout(30.0, connect=10.0)
+        )
+        self._credential_store = credential_store or MacOSKeychainCredentialStore()
         self._pending: dict[str, _PendingAuthorization] = {}
         self._lock = RLock()
 
@@ -86,6 +99,53 @@ class DriveAuthorizationService:
         if reason_code != "access_denied":
             raise DriveAuthorizationError("The Google authorization response is invalid.")
         return self._consume(state, session_id).operation_id
+
+    def complete(
+        self, state: str, code: str, session_id: str, before_request: Callable[[], None]
+    ) -> str:
+        if not 1 <= len(code) <= 4096:
+            raise DriveAuthorizationError("The Google authorization response is invalid.")
+        pending = self._consume(state, session_id)
+        before_request()
+        try:
+            response = self._http_client.post(
+                _TOKEN_ENDPOINT,
+                data={
+                    "client_id": self._client_id,
+                    "code": code,
+                    "code_verifier": pending.code_verifier,
+                    "redirect_uri": pending.redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+            )
+        except httpx.HTTPError as error:
+            raise DriveAuthorizationError(
+                "Google authorization is temporarily unavailable."
+            ) from error
+        if response.status_code != 200:
+            raise DriveAuthorizationError("Google authorization was not accepted.")
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise DriveAuthorizationError(
+                "The Google authorization response is invalid."
+            ) from error
+        if not isinstance(payload, dict):
+            raise DriveAuthorizationError("The Google authorization response is invalid.")
+        access_token = payload.get("access_token")
+        refresh_token = payload.get("refresh_token")
+        scope = payload.get("scope")
+        token_type = payload.get("token_type")
+        if (
+            not isinstance(access_token, str)
+            or not 1 <= len(access_token) <= 4096
+            or not isinstance(refresh_token, str)
+            or scope != _DRIVE_FILE_SCOPE
+            or token_type != "Bearer"
+        ):
+            raise DriveAuthorizationError("The Google authorization response is invalid.")
+        self._credential_store.store_refresh_token(refresh_token)
+        return access_token
 
     def _consume(self, state: str, session_id: str) -> _PendingAuthorization:
         self._validate_bounded_id(state, "authorization state")

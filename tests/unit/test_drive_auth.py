@@ -1,5 +1,6 @@
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 
 from job_search_cockpit.phase2.drive_auth import (
@@ -56,3 +57,41 @@ def test_callback_state_is_one_use_short_lived_and_session_bound() -> None:
     assert operation_id == "operation-1"
     with pytest.raises(DriveAuthorizationError, match="unavailable"):
         service.deny(started.state, "access_denied", "session-1")
+
+
+def test_complete_exchanges_one_use_code_and_stores_only_refresh_permission() -> None:
+    stored: list[str] = []
+    revalidations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "https://oauth2.googleapis.com/token"
+        assert request.headers["content-type"].startswith("application/x-www-form-urlencoded")
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "short-lived-access",
+                "refresh_token": "stored-in-keychain",
+                "scope": "https://www.googleapis.com/auth/drive.file",
+                "token_type": "Bearer",
+            },
+        )
+
+    service = DriveAuthorizationService(
+        client_id="desktop-client-id",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        credential_store=MacOSKeychainCredentialStore(
+            lambda _args, value: stored.append(value)
+        ),
+    )
+    started = service.begin("operation-1", "session-1", LOOPBACK_URI)
+
+    token = service.complete(
+        started.state,
+        "code-1",
+        "session-1",
+        lambda: revalidations.append("ok"),
+    )
+
+    assert token == "short-lived-access"
+    assert stored == ["stored-in-keychain\n"]
+    assert revalidations == ["ok"]
