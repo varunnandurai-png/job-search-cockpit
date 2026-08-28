@@ -118,3 +118,47 @@ def test_upload_uses_exact_id_parent_name_and_mime(tmp_path: Path) -> None:
     assert result.parents == ("folder-1",)
     assert [request.method for request in requests] == ["POST", "PUT"]
     runtime.close()
+
+
+def test_retry_reconciles_only_the_reserved_file_id(tmp_path: Path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    review = runtime.service.start_review("job-1")
+    artifact = runtime.service.finalise(
+        FinaliseResumeCommand(review.attempt_id, FINALISE_CONFIRMATION, runtime.headshot_path)
+    )
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "docx-1",
+                "name": artifact.docx_path.name,
+                "mimeType": (
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ),
+                "parents": ["folder-1"],
+                "size": str(artifact.docx_byte_length),
+                "sha256Checksum": artifact.docx_sha256,
+                "trashed": False,
+                "shared": False,
+                "isAppAuthorized": True,
+            },
+        )
+
+    client = DriveApiClient(
+        httpx.Client(transport=httpx.MockTransport(handler)), runtime.service
+    )
+    result = client.reconcile_verified_file(
+        "short-lived-access",
+        "docx-1",
+        final_artifact_id=artifact.artifact_id,
+        file_kind="docx",
+        folder_id="folder-1",
+        before_request=lambda: None,
+    )
+
+    assert result is not None
+    assert str(requests[0].url) == "https://www.googleapis.com/drive/v3/files/docx-1"
+    runtime.close()

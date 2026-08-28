@@ -116,6 +116,21 @@ class _DriveClient(Protocol):
         before_request: Callable[[], None],
     ) -> _DriveMetadata: ...
 
+    def reconcile_folder(
+        self, access_token: str, folder_id: str, *, before_request: Callable[[], None]
+    ) -> _DriveMetadata | None: ...
+
+    def reconcile_verified_file(
+        self,
+        access_token: str,
+        file_id: str,
+        *,
+        final_artifact_id: str,
+        file_kind: Literal["docx", "pdf"],
+        folder_id: str,
+        before_request: Callable[[], None],
+    ) -> _DriveMetadata | None: ...
+
 
 class FinalResumeDriveBackupService:
     """Coordinates only a visible backup of an already-verified final artifact."""
@@ -163,6 +178,82 @@ class FinalResumeDriveBackupService:
     def view_for_artifact(self, final_artifact_id: str) -> DriveBackupView:
         self._artifact_by_id(final_artifact_id)
         return self._store.view_for_artifact(final_artifact_id)
+
+    def retry_backup(self, operation_id: str) -> DriveBackupView:
+        operation = self._store.operation_by_id(operation_id)
+        artifact = self._artifact_by_id(operation.final_artifact_id)
+        if self._store.view_for_artifact(artifact.artifact_id).status != "pending":
+            raise ValueError("The Drive backup is not awaiting a manual retry.")
+        self._enter(operation.id)
+        try:
+            def before_request() -> None:
+                self._artifact_by_id(artifact.artifact_id)
+
+            access_token = self._authorization_service.access_token(before_request)
+            if access_token is None:
+                self._store.append_event(
+                    operation.id, "permission_expired", reason_code="sign_in_required"
+                )
+                return self._store.view_for_artifact(artifact.artifact_id)
+            reserved = self._store.reserved_ids(operation.id)
+            if reserved is None or self._drive_client.reconcile_folder(
+                access_token, reserved.folder_id, before_request=before_request
+            ) is None:
+                return self._pending(
+                    operation.id, artifact.artifact_id, "remote_verification_failed"
+                )
+            verified_file_ids = {
+                kind: file_id
+                for kind, file_id in (
+                    ("docx", self._store.view_for_artifact(artifact.artifact_id).docx_file_id),
+                    ("pdf", self._store.view_for_artifact(artifact.artifact_id).pdf_file_id),
+                )
+                if file_id is not None
+            }
+            retry_file_pairs: tuple[tuple[Literal["docx", "pdf"], str], ...] = (
+                ("docx", reserved.docx_file_id),
+                ("pdf", reserved.pdf_file_id),
+            )
+            for file_kind, file_id in retry_file_pairs:
+                remote = self._drive_client.reconcile_verified_file(
+                    access_token,
+                    file_id,
+                    final_artifact_id=artifact.artifact_id,
+                    file_kind=file_kind,
+                    folder_id=reserved.folder_id,
+                    before_request=before_request,
+                )
+                if file_kind in verified_file_ids:
+                    if remote is None:
+                        return self._pending(
+                            operation.id, artifact.artifact_id, "remote_verification_failed"
+                        )
+                    continue
+                if remote is None:
+                    remote = self._drive_client.upload_verified_file(
+                        access_token=access_token,
+                        file_id=file_id,
+                        folder_id=reserved.folder_id,
+                        final_artifact_id=artifact.artifact_id,
+                        file_kind=file_kind,
+                        before_request=before_request,
+                    )
+                self._artifact_by_id(artifact.artifact_id)
+                self._store.append_event(
+                    operation.id,
+                    "file_verified",
+                    file_kind=file_kind,
+                    file_id=remote.id,
+                    remote_name=remote.name,
+                    remote_mime_type=remote.mime_type,
+                    remote_sha256=remote.sha256,
+                    remote_byte_length=remote.size,
+                )
+            self._artifact_by_id(artifact.artifact_id)
+            self._store.append_event(operation.id, "completed")
+            return self._store.view_for_artifact(artifact.artifact_id)
+        finally:
+            self._leave(operation.id)
 
     def _upload_pair(
         self, operation_id: str, final_artifact_id: str, access_token: str
@@ -229,6 +320,13 @@ class FinalResumeDriveBackupService:
     def _leave(self, operation_id: str) -> None:
         with self._active_lock:
             self._active_operation_ids.discard(operation_id)
+
+    def _pending(
+        self, operation_id: str, final_artifact_id: str, reason_code: str
+    ) -> DriveBackupView:
+        self._artifact_by_id(final_artifact_id)
+        self._store.append_event(operation_id, "pending", reason_code=reason_code)
+        return self._store.view_for_artifact(final_artifact_id)
 
 
 class DriveBackupStore:
@@ -345,6 +443,15 @@ class DriveBackupStore:
                     None,
                 ),
             )
+
+    def operation_by_id(self, operation_id: str) -> DriveBackupOperation:
+        if not 1 <= len(operation_id) <= 120:
+            raise ValueError("The Drive backup operation is unavailable.")
+        with self._coordinator._session_factory() as session:
+            operation = session.get(Phase2DriveBackupOperation, operation_id)
+            if operation is None:
+                raise ValueError("The Drive backup operation is unavailable.")
+            return DriveBackupOperation(operation.id, operation.final_artifact_id)
 
     def append_event(
         self,

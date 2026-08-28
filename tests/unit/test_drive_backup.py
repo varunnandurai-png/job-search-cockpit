@@ -55,6 +55,32 @@ class _DriveThatRecordsVerifiedWork:
         )()
 
 
+class _DriveForManualRetry(_DriveThatRecordsVerifiedWork):
+    def reconcile_folder(self, access_token, folder_id, *, before_request):
+        assert access_token == "synthetic-access"
+        before_request()
+        self.calls.append(f"reconcile:{folder_id}")
+        return object()
+
+    def reconcile_verified_file(self, access_token, file_id, *, before_request, **_kwargs):
+        assert access_token == "synthetic-access"
+        before_request()
+        self.calls.append(f"reconcile:{file_id}")
+        if file_id == "docx-1":
+            return type(
+                "Metadata",
+                (),
+                {
+                    "id": file_id,
+                    "name": "synthetic.docx",
+                    "mime_type": "application/octet-stream",
+                    "sha256": "a" * 64,
+                    "size": 1,
+                },
+            )()
+        return None
+
+
 @pytest.mark.parametrize(
     ("events", "active", "expected"),
     [
@@ -183,5 +209,59 @@ def test_visible_request_with_existing_permission_backs_up_the_verified_pair(tmp
         assert result.view.status == "backed_up"
         assert drive.calls == ["generate_ids", "folder", "docx", "pdf"]
         assert store.view_for_artifact(artifact.artifact_id).status == "backed_up"
+    finally:
+        runtime.close()
+
+
+def test_manual_retry_reconciles_ids_and_uploads_only_the_missing_pdf(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        store = DriveBackupStore(runtime.coordinator)
+        operation = store.create_operation(artifact)
+        store.append_event(operation.id, "requested")
+        store.append_event(
+            operation.id,
+            "ids_reserved",
+            folder_id="folder-1",
+            docx_file_id="docx-1",
+            pdf_file_id="pdf-1",
+        )
+        store.append_event(operation.id, "folder_verified", folder_id="folder-1")
+        store.append_event(
+            operation.id,
+            "file_verified",
+            file_kind="docx",
+            file_id="docx-1",
+            remote_name="synthetic.docx",
+            remote_mime_type="application/octet-stream",
+            remote_sha256="a" * 64,
+            remote_byte_length=1,
+        )
+        store.append_event(operation.id, "pending", reason_code="drive_unavailable")
+        drive = _DriveForManualRetry()
+        service = FinalResumeDriveBackupService(
+            finalisation_service=runtime.service,
+            authorization_service=_AuthorizationWithAccess(),
+            drive_client=drive,
+            store=store,
+        )
+
+        view = service.retry_backup(operation.id)
+
+        assert view.status == "backed_up"
+        assert drive.calls == [
+            "reconcile:folder-1",
+            "reconcile:docx-1",
+            "reconcile:pdf-1",
+            "pdf",
+        ]
     finally:
         runtime.close()
