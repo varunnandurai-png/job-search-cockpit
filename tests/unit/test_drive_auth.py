@@ -1,6 +1,9 @@
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
+
 from job_search_cockpit.phase2.drive_auth import (
+    DriveAuthorizationError,
     DriveAuthorizationService,
     MacOSKeychainCredentialStore,
 )
@@ -42,3 +45,14 @@ def test_keychain_write_passes_refresh_token_on_stdin_not_argv() -> None:
     assert "refresh-secret" not in command
     assert supplied_input == "refresh-secret\n"
     assert command[-1] == "-w"
+
+
+def test_callback_state_is_one_use_short_lived_and_session_bound() -> None:
+    service = DriveAuthorizationService(client_id="desktop-client-id")
+    started = service.begin("operation-1", "session-1", LOOPBACK_URI)
+
+    operation_id = service.deny(started.state, "access_denied", "session-1")
+
+    assert operation_id == "operation-1"
+    with pytest.raises(DriveAuthorizationError, match="unavailable"):
+        service.deny(started.state, "access_denied", "session-1")

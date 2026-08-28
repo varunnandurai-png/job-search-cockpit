@@ -82,6 +82,20 @@ class DriveAuthorizationService:
             authorization_url=f"{_AUTHORIZATION_ENDPOINT}?{query}",
         )
 
+    def deny(self, state: str, reason_code: str, session_id: str) -> str:
+        if reason_code != "access_denied":
+            raise DriveAuthorizationError("The Google authorization response is invalid.")
+        return self._consume(state, session_id).operation_id
+
+    def _consume(self, state: str, session_id: str) -> _PendingAuthorization:
+        self._validate_bounded_id(state, "authorization state")
+        self._validate_bounded_id(session_id, "session")
+        with self._lock:
+            pending = self._pending.pop(state, None)
+        if pending is None or pending.expires_at < monotonic() or pending.session_id != session_id:
+            raise DriveAuthorizationError("The Google authorization request is unavailable.")
+        return pending
+
     @staticmethod
     def _validate_bounded_id(value: str, label: str) -> None:
         if not 1 <= len(value.strip()) <= 120:
