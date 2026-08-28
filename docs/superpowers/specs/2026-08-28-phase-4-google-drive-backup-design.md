@@ -2,14 +2,20 @@
 
 ## Status
 
-Approved for planning by Varun on 2026-08-28. The approved implementation
-direction is a direct Google Drive REST integration using the project's
-existing HTTP client, desktop OAuth with PKCE, the narrow `drive.file` scope,
-and macOS Keychain for the refresh token.
+Approved as written by Varun on 2026-08-28 for implementation planning. The
+approved implementation direction is a direct Google Drive REST integration
+using the project's existing HTTP client, desktop OAuth with PKCE, the narrow
+`drive.file` scope, and macOS Keychain for the refresh token.
 
 This design does not authorize implementation, Google account connection,
 OAuth consent, a real upload, a dependency change, or a retention change.
 Each remains separately gated.
+
+Varun also confirmed on 2026-08-28 that the Codex Google Drive connector is
+connected. That connector connection does not grant the Job Search Cockpit its
+own OAuth permission and is not evidence that the cockpit uploaded or verified
+a Phase III final pair. Cockpit OAuth and real-upload acceptance therefore
+remain subject to the gates below.
 
 ## Objective
 
