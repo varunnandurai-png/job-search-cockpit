@@ -23,6 +23,7 @@ class _AuthorizationAfterConsent:
 
     def begin(self, operation_id, session_id, redirect_uri):
         assert operation_id
+        self.operation_id = operation_id
         assert session_id == "session-1"
         assert redirect_uri.endswith("/oauth/callback")
         return type(
@@ -40,6 +41,12 @@ class _AuthorizationAfterConsent:
         assert session_id == "session-1"
         before_request()
         return "synthetic-access"
+
+    def deny(self, state, reason_code, session_id):
+        assert state == "state-1"
+        assert reason_code == "access_denied"
+        assert session_id == "session-1"
+        return self.operation_id
 
 
 class _DriveThatRecordsVerifiedWork:
@@ -324,5 +331,39 @@ def test_one_use_authorization_continues_only_the_bound_backup(tmp_path) -> None
         assert requested.view.status == "sign_in_required"
         assert completed.status == "backed_up"
         assert drive.calls == ["generate_ids", "folder", "docx", "pdf"]
+    finally:
+        runtime.close()
+
+
+def test_denied_authorization_consumes_state_without_drive_work(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        drive = _DriveThatRecordsVerifiedWork()
+        service = FinalResumeDriveBackupService(
+            finalisation_service=runtime.service,
+            authorization_service=_AuthorizationAfterConsent(),
+            drive_client=drive,
+            store=DriveBackupStore(runtime.coordinator),
+        )
+        service.request_backup(
+            final_artifact_id=artifact.artifact_id,
+            session_id="session-1",
+            redirect_uri="http://127.0.0.1:8765/phase-2/drive-backups/oauth/callback",
+        )
+
+        view = service.deny_authorization(
+            state="state-1", reason_code="access_denied", session_id="session-1"
+        )
+
+        assert view.status == "permission_expired"
+        assert drive.calls == []
     finally:
         runtime.close()

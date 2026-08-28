@@ -85,6 +85,8 @@ class _DriveAuthorization(Protocol):
         self, state: str, code: str, session_id: str, before_request: Callable[[], None]
     ) -> str: ...
 
+    def deny(self, state: str, reason_code: str, session_id: str) -> str: ...
+
 
 class _FinalisationService(Protocol):
     def artifact_by_id(self, artifact_id: str) -> FinalResumeArtifact: ...
@@ -195,6 +197,23 @@ class FinalResumeDriveBackupService:
             return self._upload_pair(operation.id, operation.final_artifact_id, access_token)
         finally:
             self._leave(operation.id)
+
+    def deny_authorization(
+        self, *, state: str, reason_code: str, session_id: str
+    ) -> DriveBackupView:
+        with self._active_lock:
+            operation_id = self._authorization_operations.pop(state, None)
+        if operation_id is None:
+            raise ValueError("The Drive authorization request is unavailable.")
+        consumed_operation_id = self._authorization_service.deny(state, reason_code, session_id)
+        if consumed_operation_id != operation_id:
+            raise ValueError("The Drive authorization request is unavailable.")
+        operation = self._store.operation_by_id(operation_id)
+        self._artifact_by_id(operation.final_artifact_id)
+        self._store.append_event(
+            operation.id, "authorization_denied", reason_code="access_denied"
+        )
+        return self._store.view_for_artifact(operation.final_artifact_id)
 
     def retry_backup(self, operation_id: str) -> DriveBackupView:
         operation = self._store.operation_by_id(operation_id)
