@@ -1,6 +1,8 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from threading import RLock
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -62,6 +64,171 @@ class ReservedDriveIds:
 class DriveBackupOperation:
     id: str
     final_artifact_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupRequestResult:
+    view: DriveBackupView
+    authorization_url: str | None = None
+
+
+class _DriveAuthorization(Protocol):
+    def access_token(self, before_request: Callable[[], None]) -> str | None: ...
+
+    def begin(
+        self, operation_id: str, session_id: str, redirect_uri: str
+    ) -> "_AuthorizationRequest": ...
+
+
+class _AuthorizationRequest(Protocol):
+    authorization_url: str
+
+
+class _FinalisationService(Protocol):
+    def artifact_by_id(self, artifact_id: str) -> FinalResumeArtifact: ...
+
+
+class _DriveMetadata(Protocol):
+    id: str
+    name: str
+    mime_type: str
+    sha256: str | None
+    size: int | None
+
+
+class _DriveClient(Protocol):
+    def generate_ids(
+        self, access_token: str, count: int, *, before_request: Callable[[], None]
+    ) -> tuple[str, ...]: ...
+
+    def create_or_verify_folder(
+        self, access_token: str, folder_id: str, *, before_request: Callable[[], None]
+    ) -> _DriveMetadata: ...
+
+    def upload_verified_file(
+        self,
+        *,
+        access_token: str,
+        file_id: str,
+        folder_id: str,
+        final_artifact_id: str,
+        file_kind: Literal["docx", "pdf"],
+        before_request: Callable[[], None],
+    ) -> _DriveMetadata: ...
+
+
+class FinalResumeDriveBackupService:
+    """Coordinates only a visible backup of an already-verified final artifact."""
+
+    def __init__(
+        self,
+        *,
+        finalisation_service: _FinalisationService,
+        authorization_service: _DriveAuthorization,
+        drive_client: _DriveClient,
+        store: "DriveBackupStore",
+    ) -> None:
+        self._finalisation_service = finalisation_service
+        self._authorization_service = authorization_service
+        self._drive_client = drive_client
+        self._store = store
+        self._active_operation_ids: set[str] = set()
+        self._active_lock = RLock()
+
+    def request_backup(
+        self, *, final_artifact_id: str, session_id: str, redirect_uri: str
+    ) -> BackupRequestResult:
+        artifact = self._artifact_by_id(final_artifact_id)
+        operation = self._store.create_operation(artifact)
+        self._enter(operation.id)
+        try:
+            self._store.append_event(operation.id, "requested")
+            def before_request() -> None:
+                self._artifact_by_id(final_artifact_id)
+
+            access_token = self._authorization_service.access_token(before_request)
+            if access_token is None:
+                request = self._authorization_service.begin(operation.id, session_id, redirect_uri)
+                self._store.append_event(operation.id, "authorization_required")
+                return BackupRequestResult(
+                    view=self._store.view_for_artifact(final_artifact_id),
+                    authorization_url=request.authorization_url,
+                )
+            return BackupRequestResult(
+                self._upload_pair(operation.id, final_artifact_id, access_token)
+            )
+        finally:
+            self._leave(operation.id)
+
+    def view_for_artifact(self, final_artifact_id: str) -> DriveBackupView:
+        self._artifact_by_id(final_artifact_id)
+        return self._store.view_for_artifact(final_artifact_id)
+
+    def _upload_pair(
+        self, operation_id: str, final_artifact_id: str, access_token: str
+    ) -> DriveBackupView:
+        def before_request() -> None:
+            self._artifact_by_id(final_artifact_id)
+
+        reserved = self._store.reserved_ids(operation_id)
+        if reserved is None:
+            folder_id, docx_file_id, pdf_file_id = self._drive_client.generate_ids(
+                access_token, 3, before_request=before_request
+            )
+            self._artifact_by_id(final_artifact_id)
+            self._store.append_event(
+                operation_id,
+                "ids_reserved",
+                folder_id=folder_id,
+                docx_file_id=docx_file_id,
+                pdf_file_id=pdf_file_id,
+            )
+            reserved = ReservedDriveIds(folder_id, docx_file_id, pdf_file_id)
+        self._drive_client.create_or_verify_folder(
+            access_token, reserved.folder_id, before_request=before_request
+        )
+        self._artifact_by_id(final_artifact_id)
+        self._store.append_event(operation_id, "folder_verified", folder_id=reserved.folder_id)
+        file_pairs: tuple[tuple[Literal["docx", "pdf"], str], ...] = (
+            ("docx", reserved.docx_file_id),
+            ("pdf", reserved.pdf_file_id),
+        )
+        for file_kind, file_id in file_pairs:
+            remote = self._drive_client.upload_verified_file(
+                access_token=access_token,
+                file_id=file_id,
+                folder_id=reserved.folder_id,
+                final_artifact_id=final_artifact_id,
+                file_kind=file_kind,
+                before_request=before_request,
+            )
+            self._artifact_by_id(final_artifact_id)
+            self._store.append_event(
+                operation_id,
+                "file_verified",
+                file_kind=file_kind,
+                file_id=remote.id,
+                remote_name=remote.name,
+                remote_mime_type=remote.mime_type,
+                remote_sha256=remote.sha256,
+                remote_byte_length=remote.size,
+            )
+        self._artifact_by_id(final_artifact_id)
+        self._store.append_event(operation_id, "completed")
+        return self._store.view_for_artifact(final_artifact_id)
+
+    def _artifact_by_id(self, final_artifact_id: str) -> FinalResumeArtifact:
+        return self._finalisation_service.artifact_by_id(final_artifact_id)
+
+    def _enter(self, operation_id: str) -> None:
+        with self._active_lock:
+            if operation_id in self._active_operation_ids:
+                raise ValueError("The Drive backup is already in progress.")
+            self._active_operation_ids.add(operation_id)
+
+    def _leave(self, operation_id: str) -> None:
+        with self._active_lock:
+            self._active_operation_ids.discard(operation_id)
 
 
 class DriveBackupStore:
@@ -319,7 +486,9 @@ class DriveBackupStore:
             "authorization_required" not in kinds
         ):
             raise ValueError("Drive authorization was not requested.")
-        if kind == "ids_reserved" and "authorization_granted" not in kinds:
+        if kind == "ids_reserved" and not (
+            "authorization_granted" in kinds or "authorization_required" not in kinds
+        ):
             raise ValueError("Drive authorization was not granted.")
         if kind == "folder_verified" and "ids_reserved" not in kinds:
             raise ValueError("Drive IDs have not been reserved.")
