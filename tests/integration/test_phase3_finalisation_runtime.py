@@ -46,6 +46,50 @@ def test_artifact_access_revalidates_and_returns_the_published_pair(tmp_path: Pa
         runtime.close()
 
 
+def test_final_artifact_can_be_reloaded_only_by_its_opaque_row_id(tmp_path: Path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        finalised = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+
+        accessed = runtime.service.artifact_by_id(finalised.artifact_id)
+
+        assert accessed == finalised
+        with pytest.raises(FinalisationError, match="unavailable"):
+            runtime.service.artifact_by_id(str(finalised.docx_path))
+    finally:
+        runtime.close()
+
+
+def test_final_artifact_id_lookup_returns_its_immutable_authority_binding(
+    tmp_path: Path,
+) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        finalised = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+
+        accessed = runtime.service.artifact_by_id(finalised.artifact_id)
+
+        assert accessed.authority.authorization_id == "authorization-1"
+        assert accessed.authority.requirement_ledger_fingerprint == "f" * 64
+        assert accessed.authority.phase2_activation_generation == 1
+    finally:
+        runtime.close()
+
+
 def test_review_lookup_revalidates_the_bound_authorization_and_projection(
     tmp_path: Path,
 ) -> None:

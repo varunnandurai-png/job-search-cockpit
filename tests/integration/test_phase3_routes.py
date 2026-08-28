@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from job_search_cockpit.phase2.finalisation import (
@@ -6,6 +7,7 @@ from job_search_cockpit.phase2.finalisation import (
     FinalisationError,
     FinaliseResumeCommand,
     FinalResumeArtifact,
+    FinalResumeAuthorityBinding,
     ResumeDocumentReview,
 )
 from job_search_cockpit.phase2.requirements import (
@@ -74,6 +76,7 @@ class SyntheticRouteFinalisationService:
 
     def _artifact(self) -> FinalResumeArtifact:
         return FinalResumeArtifact(
+            artifact_id="final-artifact-1",
             attempt_id="attempt-1",
             job_id="job-1",
             job_revision_id="job-revision-1",
@@ -84,6 +87,21 @@ class SyntheticRouteFinalisationService:
             pdf_sha256="d" * 64,
             pdf_byte_length=456,
             content_fingerprint="a" * 64,
+            authority=FinalResumeAuthorityBinding(
+                requirement_ledger_fingerprint="e" * 64,
+                authorization_id="authorization-1",
+                authorization_nonce="nonce-1",
+                authorization_expires_at=datetime(2099, 1, 1),
+                phase1_profile_fingerprint="f" * 64,
+                phase1_profile_generation=1,
+                phase1_readiness_fingerprint="g" * 64,
+                phase1_readiness_generation=1,
+                phase1_authority_fingerprint="h" * 64,
+                phase1_authority_generation=1,
+                phase1_restore_generation=0,
+                phase2_activation_generation=1,
+                phase2_restore_generation=0,
+            ),
         )
 
 

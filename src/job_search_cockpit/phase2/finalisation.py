@@ -84,7 +84,25 @@ class FinaliseResumeCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class FinalResumeAuthorityBinding:
+    requirement_ledger_fingerprint: str
+    authorization_id: str
+    authorization_nonce: str
+    authorization_expires_at: datetime
+    phase1_profile_fingerprint: str
+    phase1_profile_generation: int
+    phase1_readiness_fingerprint: str
+    phase1_readiness_generation: int
+    phase1_authority_fingerprint: str
+    phase1_authority_generation: int
+    phase1_restore_generation: int
+    phase2_activation_generation: int
+    phase2_restore_generation: int
+
+
+@dataclass(frozen=True, slots=True)
 class FinalResumeArtifact:
+    artifact_id: str
     attempt_id: str
     job_id: str
     job_revision_id: str
@@ -95,6 +113,7 @@ class FinalResumeArtifact:
     pdf_sha256: str
     pdf_byte_length: int
     content_fingerprint: str
+    authority: FinalResumeAuthorityBinding
 
 
 class LocalResumeFinalisationService:
@@ -208,17 +227,28 @@ class LocalResumeFinalisationService:
 
     def artifacts_for(self, attempt_id: str) -> FinalResumeArtifact:
         attempt = self._attempt(attempt_id)
-        authorization = self._authorization_for_attempt(attempt)
-        document = self._document_for_attempt(attempt, authorization)
+        row = self._artifact_row(attempt.id)
+        if row is None:
+            raise FinalisationError("The final résumé artifacts are unavailable.")
+        return self._verified_artifact(attempt, row)
+
+    def artifact_by_id(self, artifact_id: str) -> FinalResumeArtifact:
+        if not artifact_id.strip() or len(artifact_id) > 120:
+            raise FinalisationError("The final résumé artifacts are unavailable.")
         with self._coordinator._session_factory() as session:
-            row = session.scalar(
-                select(Phase2FinalResumeArtifact).where(
-                    Phase2FinalResumeArtifact.attempt_id == attempt.id
-                )
-            )
+            row = session.get(Phase2FinalResumeArtifact, artifact_id)
             if row is None:
                 raise FinalisationError("The final résumé artifacts are unavailable.")
             session.expunge(row)
+        return self._verified_artifact(self._attempt(row.attempt_id), row)
+
+    def _verified_artifact(
+        self,
+        attempt: Phase2ResumeDocumentAttempt,
+        row: Phase2FinalResumeArtifact,
+    ) -> FinalResumeArtifact:
+        authorization = self._authorization_for_attempt(attempt)
+        document = self._document_for_attempt(attempt, authorization)
         docx_path = self._artifact_path(row.docx_relative_path)
         pdf_path = self._artifact_path(row.pdf_relative_path)
         if (
@@ -236,7 +266,7 @@ class LocalResumeFinalisationService:
             or extract_pdf_text(pdf_path) != document.plain_text
         ):
             raise FinalisationError("The final résumé artifacts failed verification.")
-        return self._artifact_view(row, docx_path, pdf_path)
+        return self._artifact_view(row, docx_path, pdf_path, attempt)
 
     def _authorization_for_attempt(
         self, attempt: Phase2ResumeDocumentAttempt
@@ -455,7 +485,7 @@ class LocalResumeFinalisationService:
                 )
             )
             assert row is not None
-            return self._artifact_view(row, docx, pdf)
+            return self._artifact_view(row, docx, pdf, attempt)
         return self._coordinator.run(insert, "record_final_resume_artifact")
 
     @staticmethod
@@ -488,9 +518,13 @@ class LocalResumeFinalisationService:
 
     @staticmethod
     def _artifact_view(
-        row: Phase2FinalResumeArtifact, docx_path: Path, pdf_path: Path
+        row: Phase2FinalResumeArtifact,
+        docx_path: Path,
+        pdf_path: Path,
+        attempt: Phase2ResumeDocumentAttempt,
     ) -> FinalResumeArtifact:
         return FinalResumeArtifact(
+            artifact_id=row.id,
             attempt_id=row.attempt_id,
             job_id=row.job_id,
             job_revision_id=row.job_revision_id,
@@ -501,6 +535,21 @@ class LocalResumeFinalisationService:
             pdf_sha256=row.pdf_sha256,
             pdf_byte_length=row.pdf_byte_length,
             content_fingerprint=row.content_fingerprint,
+            authority=FinalResumeAuthorityBinding(
+                requirement_ledger_fingerprint=attempt.requirement_ledger_fingerprint,
+                authorization_id=attempt.authorization_id,
+                authorization_nonce=attempt.authorization_nonce,
+                authorization_expires_at=attempt.authorization_expires_at,
+                phase1_profile_fingerprint=attempt.phase1_profile_fingerprint,
+                phase1_profile_generation=attempt.phase1_profile_generation,
+                phase1_readiness_fingerprint=attempt.phase1_readiness_fingerprint,
+                phase1_readiness_generation=attempt.phase1_readiness_generation,
+                phase1_authority_fingerprint=attempt.phase1_authority_fingerprint,
+                phase1_authority_generation=attempt.phase1_authority_generation,
+                phase1_restore_generation=attempt.phase1_restore_generation,
+                phase2_activation_generation=attempt.phase2_activation_generation,
+                phase2_restore_generation=attempt.phase2_restore_generation,
+            ),
         )
 
     @staticmethod
