@@ -134,3 +134,32 @@ def test_access_token_returns_none_when_no_keychain_permission_exists() -> None:
     )
 
     assert service.access_token(lambda: None) is None
+
+
+def test_invalid_grant_removes_only_the_refresh_permission() -> None:
+    deleted: list[str] = []
+
+    class CredentialStore:
+        def store_refresh_token(self, refresh_token: str) -> None:
+            raise AssertionError(refresh_token)
+
+        def load_refresh_token(self) -> str | None:
+            return "refresh-secret"
+
+        def delete_refresh_token(self) -> None:
+            deleted.append("deleted")
+
+    service = DriveAuthorizationService(
+        client_id="desktop-client-id",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(400, json={"error": "invalid_grant"})
+            )
+        ),
+        credential_store=CredentialStore(),
+    )
+
+    with pytest.raises(DriveAuthorizationError, match="permission expired"):
+        service.access_token(lambda: None)
+
+    assert deleted == ["deleted"]

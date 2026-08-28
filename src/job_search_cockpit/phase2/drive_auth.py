@@ -175,6 +175,9 @@ class DriveAuthorizationService:
                 "Google authorization is temporarily unavailable."
             ) from error
         if response.status_code != 200:
+            if _is_invalid_grant(response):
+                self._credential_store.delete_refresh_token()
+                raise DriveAuthorizationError("Google permission expired.")
             raise DriveAuthorizationError("Google authorization was not accepted.")
         try:
             payload = response.json()
@@ -213,6 +216,14 @@ class DriveAuthorizationService:
             or parsed.fragment
         ):
             raise DriveAuthorizationError("The Google authorization callback address is invalid.")
+
+
+def _is_invalid_grant(response: httpx.Response) -> bool:
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and payload.get("error") == "invalid_grant"
 
 
 class MacOSKeychainCredentialStore:
