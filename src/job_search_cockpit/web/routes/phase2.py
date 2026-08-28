@@ -31,6 +31,25 @@ def _runtime(request: Request) -> Phase2Runtime | None:
     return runtime if isinstance(runtime, Phase2Runtime) else None
 
 
+@router.get("/phase-2/drive-backups/oauth/callback", response_class=HTMLResponse)
+def drive_oauth_callback(request: Request) -> Response:
+    """The sole route that may receive Google's cross-site loopback redirect."""
+    runtime = _runtime(request)
+    state = _bounded(request.query_params.get("state"), 120)
+    code = _bounded(request.query_params.get("code"), 4096)
+    if runtime is None or runtime.drive_backup_service is None or not state or not code:
+        return PlainTextResponse("Google authorization is unavailable.", status_code=400)
+    try:
+        runtime.drive_backup_service.complete_authorization(
+            state=state,
+            code=code,
+            session_id=request.app.state.launch_session.session_id,
+        )
+    except ValueError:
+        return PlainTextResponse("Google authorization is unavailable.", status_code=400)
+    return PlainTextResponse("Google authorization completed safely.")
+
+
 @router.get("/phase-2", response_class=HTMLResponse)
 def activation_page(request: Request) -> Response:
     service = _activation_service(request)

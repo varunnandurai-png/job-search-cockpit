@@ -61,7 +61,11 @@ def create_app(
             return _secured(PlainTextResponse("Method not allowed.", status_code=405))
         if request.headers.get("upgrade", "").lower() == "websocket":
             return _secured(PlainTextResponse("WebSocket access is disabled.", status_code=400))
-        if request.url.path != "/launch" and not launch_session.valid_cookie(
+        oauth_callback = (
+            request.method == "GET"
+            and request.url.path == "/phase-2/drive-backups/oauth/callback"
+        )
+        if request.url.path != "/launch" and not oauth_callback and not launch_session.valid_cookie(
             request.cookies.get("cockpit_session")
         ):
             return _secured(PlainTextResponse("Launch session required.", status_code=401))
