@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from os import environ
 from pathlib import Path
 from typing import Literal
 
@@ -25,6 +26,7 @@ class Settings:
     host: Literal["127.0.0.1"] = "127.0.0.1"
     data_dir: Path = Path.home() / "Library/Application Support/JobSearchCockpit"
     _source_root: Path = Path("/Users/nandurivarun/Desktop/Documents/CV")
+    google_oauth_client_id: str = ""
 
     @property
     def source_root(self) -> Path:
@@ -63,3 +65,17 @@ class Settings:
     @classmethod
     def for_tests(cls, data_dir: Path, source_root: Path) -> "Settings":
         return cls(data_dir=data_dir, _source_root=source_root)
+
+    @classmethod
+    def from_environment(cls, *, data_dir: Path | None = None) -> "Settings":
+        if environ.get("JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_SECRET"):
+            raise ValueError("Google OAuth client secrets are not supported.")
+        client_id = environ.get("JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_ID", "")
+        if client_id and (
+            len(client_id) > 255
+            or client_id != client_id.strip()
+            or any(character.isspace() or ord(character) < 32 for character in client_id)
+            or not client_id.endswith(".apps.googleusercontent.com")
+        ):
+            raise ValueError("The Google OAuth client ID is invalid.")
+        return cls(data_dir=data_dir or cls().data_dir, google_oauth_client_id=client_id)

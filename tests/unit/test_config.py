@@ -15,6 +15,19 @@ def test_default_settings_keep_private_data_outside_repository() -> None:
     assert settings.database_path == settings.data_dir / "vault.sqlite3"
 
 
+def test_google_client_id_is_validated_public_environment_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(
+        "JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_ID",
+        "123.apps.googleusercontent.com",
+    )
+
+    settings = Settings.from_environment(data_dir=tmp_path)
+
+    assert settings.google_oauth_client_id == "123.apps.googleusercontent.com"
+
+
 def test_curated_source_manifest_is_exact() -> None:
     settings = Settings()
     assert [source.key for source in settings.sources] == [
