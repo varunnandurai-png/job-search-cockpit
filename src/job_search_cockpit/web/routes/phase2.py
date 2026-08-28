@@ -147,7 +147,11 @@ def resume_review(request: Request, attempt_id: str) -> Response:
     artifact: FinalResumeArtifact | None = None
     with suppress(FinalisationError, ResumePreparationError, ValueError):
         artifact = runtime.resume_finalisation_service.artifacts_for(attempt_id)
-    return _resume_page(request, review, artifact)
+    drive_backup_view = None
+    if artifact is not None and runtime.drive_backup_service is not None:
+        with suppress(ValueError):
+            drive_backup_view = runtime.drive_backup_service.view_for_artifact(artifact.artifact_id)
+    return _resume_page(request, review, artifact, drive_backup_view=drive_backup_view)
 
 
 @router.post("/phase-2/resume-reviews/{attempt_id}/finalise")
@@ -184,6 +188,7 @@ def _resume_page(
     *,
     error: str = "",
     status_code: int = 200,
+    drive_backup_view: object | None = None,
 ) -> Response:
     response: Response = request.app.state.templates.TemplateResponse(
         request,
@@ -194,6 +199,7 @@ def _resume_page(
             "resume_artifact": artifact,
             "error": error,
             "discovery_status": None,
+            "drive_backup_view": drive_backup_view,
         },
         status_code=status_code,
     )

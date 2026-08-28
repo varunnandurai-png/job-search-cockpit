@@ -43,6 +43,13 @@
         <p>DOCX SHA-256: {{ resume_artifact.docx_sha256 }} · {{ resume_artifact.docx_byte_length }} bytes</p>
         <p>PDF path: {{ resume_artifact.pdf_path }}</p>
         <p>PDF SHA-256: {{ resume_artifact.pdf_sha256 }} · {{ resume_artifact.pdf_byte_length }} bytes</p>
+        {% if drive_backup_view and drive_backup_view.status == 'not_requested' %}
+          <form method="post" action="/phase-2/drive-backups">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="final_artifact_id" value="{{ resume_artifact.artifact_id }}">
+            <button type="submit" formtarget="_blank">Back up to Google Drive</button>
+          </form>
+        {% endif %}
       {% else %}
         <p>No final files exist. Finalisation requires the exact confirmation and a local professional headshot.</p>
         <form method="post" action="/phase-2/resume-reviews/{{ resume_review.attempt_id }}/finalise">
