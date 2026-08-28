@@ -76,6 +76,22 @@ async def request_drive_backup(request: Request) -> Response:
     return RedirectResponse("/phase-2/review", status_code=303)
 
 
+@router.post("/phase-2/drive-backups/{operation_id}/retry")
+async def retry_drive_backup(request: Request, operation_id: str) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    operation_id = _bounded(operation_id, 120)
+    if runtime is None or runtime.drive_backup_service is None or not operation_id:
+        return PlainTextResponse("Drive backup is unavailable.", status_code=400)
+    try:
+        runtime.drive_backup_service.retry_backup(operation_id)
+    except ValueError:
+        return PlainTextResponse("Drive backup is unavailable.", status_code=400)
+    return RedirectResponse("/phase-2/review", status_code=303)
+
+
 @router.get("/phase-2", response_class=HTMLResponse)
 def activation_page(request: Request) -> Response:
     service = _activation_service(request)

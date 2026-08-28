@@ -83,3 +83,11 @@ def test_pending_backup_shows_only_the_manual_retry_action(vault_settings, tmp_p
 
     assert "Retry backup" in response.text
     assert "Back up to Google Drive" not in response.text
+
+
+def test_retry_request_requires_an_enabled_service(vault_settings) -> None:
+    with authenticated_test_app(vault_settings) as client:
+        response = client.post("/phase-2/drive-backups/operation-1/retry")
+
+    assert response.status_code == 400
+    assert "Drive backup is unavailable" in response.text
