@@ -220,7 +220,7 @@ def build_launch_plan(settings: Settings) -> LaunchPlan:
 
 def main() -> int:
     try:
-        plan = build_launch_plan(Settings())
+        plan = build_launch_plan(Settings.from_environment())
     except Exception as error:
         print(f"The cockpit could not start: {error}")
         return 1

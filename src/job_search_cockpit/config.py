@@ -5,6 +5,9 @@ from os import environ
 from pathlib import Path
 from typing import Literal
 
+_GOOGLE_CLIENT_ID_ENV = "JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_ID"
+_GOOGLE_CLIENT_SECRET_ENV = "JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_SECRET"
+
 
 class SourceKind(StrEnum):
     ASSESSMENT = "assessment_markdown"
@@ -68,9 +71,10 @@ class Settings:
 
     @classmethod
     def from_environment(cls, *, data_dir: Path | None = None) -> "Settings":
-        if environ.get("JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_SECRET"):
+        dotenv_values = _local_dotenv_values()
+        if environ.get(_GOOGLE_CLIENT_SECRET_ENV) or dotenv_values.get(_GOOGLE_CLIENT_SECRET_ENV):
             raise ValueError("Google OAuth client secrets are not supported.")
-        client_id = environ.get("JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_ID", "")
+        client_id = environ.get(_GOOGLE_CLIENT_ID_ENV, dotenv_values.get(_GOOGLE_CLIENT_ID_ENV, ""))
         if client_id and (
             len(client_id) > 255
             or client_id != client_id.strip()
@@ -79,3 +83,24 @@ class Settings:
         ):
             raise ValueError("The Google OAuth client ID is invalid.")
         return cls(data_dir=data_dir or cls().data_dir, google_oauth_client_id=client_id)
+
+
+def _local_dotenv_values() -> dict[str, str]:
+    """Read only the two supported OAuth settings from a regular local .env file."""
+    dotenv_path = Path.cwd() / ".env"
+    if not dotenv_path.exists():
+        return {}
+    if dotenv_path.is_symlink() or not dotenv_path.is_file() or dotenv_path.stat().st_size > 8192:
+        raise ValueError("The local Google OAuth configuration is invalid.")
+    values: dict[str, str] = {}
+    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or key not in {_GOOGLE_CLIENT_ID_ENV, _GOOGLE_CLIENT_SECRET_ENV}:
+            continue
+        if key in values:
+            raise ValueError("The local Google OAuth configuration is invalid.")
+        values[key] = value
+    return values

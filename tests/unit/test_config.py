@@ -28,6 +28,21 @@ def test_google_client_id_is_validated_public_environment_configuration(
     assert settings.google_oauth_client_id == "123.apps.googleusercontent.com"
 
 
+def test_google_client_id_can_be_loaded_from_the_local_dotenv_without_overriding_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".env").write_text(
+        "JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_ID=456.apps.googleusercontent.com\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("JOB_SEARCH_COCKPIT_GOOGLE_OAUTH_CLIENT_ID", raising=False)
+
+    assert Settings.from_environment(data_dir=tmp_path).google_oauth_client_id == (
+        "456.apps.googleusercontent.com"
+    )
+
+
 def test_curated_source_manifest_is_exact() -> None:
     settings = Settings()
     assert [source.key for source in settings.sources] == [
