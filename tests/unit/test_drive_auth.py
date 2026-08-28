@@ -95,3 +95,19 @@ def test_complete_exchanges_one_use_code_and_stores_only_refresh_permission() ->
     assert token == "short-lived-access"
     assert stored == ["stored-in-keychain\n"]
     assert revalidations == ["ok"]
+
+
+def test_access_token_returns_none_when_no_keychain_permission_exists() -> None:
+    class EmptyCredentialStore:
+        def store_refresh_token(self, refresh_token: str) -> None:
+            raise AssertionError(refresh_token)
+
+        def load_refresh_token(self) -> str | None:
+            return None
+
+    service = DriveAuthorizationService(
+        client_id="desktop-client-id",
+        credential_store=EmptyCredentialStore(),
+    )
+
+    assert service.access_token(lambda: None) is None

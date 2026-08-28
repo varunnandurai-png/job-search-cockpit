@@ -6,6 +6,7 @@ from secrets import token_urlsafe
 from subprocess import run
 from threading import RLock
 from time import monotonic
+from typing import Protocol
 from urllib.parse import urlencode, urlsplit
 
 import httpx
@@ -38,6 +39,12 @@ class _PendingAuthorization:
     expires_at: float
 
 
+class DriveCredentialStore(Protocol):
+    def store_refresh_token(self, refresh_token: str) -> None: ...
+
+    def load_refresh_token(self) -> str | None: ...
+
+
 class DriveAuthorizationService:
     """Creates one-use, session-bound Google OAuth requests without contacting Google."""
 
@@ -46,7 +53,7 @@ class DriveAuthorizationService:
         *,
         client_id: str,
         http_client: httpx.Client | None = None,
-        credential_store: "MacOSKeychainCredentialStore | None" = None,
+        credential_store: DriveCredentialStore | None = None,
     ) -> None:
         if not client_id.strip() or len(client_id) > 240:
             raise ValueError("The Google desktop client ID is invalid.")
@@ -147,6 +154,37 @@ class DriveAuthorizationService:
         self._credential_store.store_refresh_token(refresh_token)
         return access_token
 
+    def access_token(self, before_request: Callable[[], None]) -> str | None:
+        refresh_token = self._credential_store.load_refresh_token()
+        if refresh_token is None:
+            return None
+        before_request()
+        try:
+            response = self._http_client.post(
+                _TOKEN_ENDPOINT,
+                data={
+                    "client_id": self._client_id,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+        except httpx.HTTPError as error:
+            raise DriveAuthorizationError(
+                "Google authorization is temporarily unavailable."
+            ) from error
+        if response.status_code != 200:
+            raise DriveAuthorizationError("Google authorization was not accepted.")
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise DriveAuthorizationError(
+                "The Google authorization response is invalid."
+            ) from error
+        access_token = payload.get("access_token") if isinstance(payload, dict) else None
+        if not isinstance(access_token, str) or not 1 <= len(access_token) <= 4096:
+            raise DriveAuthorizationError("The Google authorization response is invalid.")
+        return access_token
+
     def _consume(self, state: str, session_id: str) -> _PendingAuthorization:
         self._validate_bounded_id(state, "authorization state")
         self._validate_bounded_id(session_id, "session")
@@ -197,6 +235,31 @@ class MacOSKeychainCredentialStore:
             ),
             f"{refresh_token}\n",
         )
+
+    @staticmethod
+    def load_refresh_token() -> str | None:
+        try:
+            result = run(
+                (
+                    "/usr/bin/security",
+                    "find-generic-password",
+                    "-s",
+                    _KEYCHAIN_SERVICE,
+                    "-a",
+                    _KEYCHAIN_ACCOUNT,
+                    "-w",
+                ),
+                timeout=5,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as error:
+            raise DriveAuthorizationError("The macOS Keychain is unavailable.") from error
+        if result.returncode != 0:
+            return None
+        token = result.stdout.rstrip("\n")
+        return token if token else None
 
     @staticmethod
     def _run(args: tuple[str, ...], value: str) -> None:
