@@ -179,6 +179,126 @@ class DriveBackupStore:
                 ),
             )
 
+    def append_event(
+        self,
+        operation_id: str,
+        kind: str,
+        *,
+        reason_code: str | None = None,
+        file_kind: Literal["docx", "pdf"] | None = None,
+        folder_id: str | None = None,
+        file_id: str | None = None,
+        remote_name: str | None = None,
+        remote_mime_type: str | None = None,
+        remote_sha256: str | None = None,
+        remote_byte_length: int | None = None,
+    ) -> None:
+        self._validate_event_fields(
+            kind,
+            reason_code=reason_code,
+            file_kind=file_kind,
+            folder_id=folder_id,
+            file_id=file_id,
+            remote_name=remote_name,
+            remote_mime_type=remote_mime_type,
+            remote_sha256=remote_sha256,
+            remote_byte_length=remote_byte_length,
+        )
+
+        def insert(session: Session) -> None:
+            if session.get(Phase2DriveBackupOperation, operation_id) is None:
+                raise ValueError("The Drive backup operation is unavailable.")
+            events = tuple(
+                session.scalars(
+                    select(Phase2DriveBackupEvent)
+                    .where(Phase2DriveBackupEvent.operation_id == operation_id)
+                    .order_by(Phase2DriveBackupEvent.created_at, Phase2DriveBackupEvent.id)
+                )
+            )
+            self._assert_event_order(events, kind, file_kind=file_kind)
+            session.add(
+                Phase2DriveBackupEvent(
+                    id=str(uuid4()),
+                    operation_id=operation_id,
+                    kind=kind,
+                    reason_code=reason_code,
+                    file_kind=file_kind,
+                    folder_id=folder_id,
+                    file_id=file_id,
+                    remote_name=remote_name,
+                    remote_mime_type=remote_mime_type,
+                    remote_sha256=remote_sha256,
+                    remote_byte_length=remote_byte_length,
+                )
+            )
+
+        self._coordinator.run(insert, "record_private_drive_backup_event")
+
+    @staticmethod
+    def _validate_event_fields(
+        kind: str,
+        *,
+        reason_code: str | None,
+        file_kind: str | None,
+        folder_id: str | None,
+        file_id: str | None,
+        remote_name: str | None,
+        remote_mime_type: str | None,
+        remote_sha256: str | None,
+        remote_byte_length: int | None,
+    ) -> None:
+        if kind not in _EVENT_KINDS:
+            raise ValueError("The Drive backup event kind is invalid.")
+        for value, limit in (
+            (reason_code, 64),
+            (folder_id, 255),
+            (file_id, 255),
+            (remote_name, 260),
+            (remote_mime_type, 120),
+            (remote_sha256, 64),
+        ):
+            if value is not None and not 1 <= len(value) <= limit:
+                raise ValueError("The Drive backup event value is invalid.")
+        if file_kind is not None and file_kind not in {"docx", "pdf"}:
+            raise ValueError("The Drive backup file kind is invalid.")
+        if remote_byte_length is not None and remote_byte_length < 0:
+            raise ValueError("The Drive backup file size is invalid.")
+        if kind == "file_verified" and (file_kind is None or file_id is None):
+            raise ValueError("A verified Drive file requires its kind and ID.")
+
+    @staticmethod
+    def _assert_event_order(
+        events: tuple[Phase2DriveBackupEvent, ...], kind: str, *, file_kind: str | None
+    ) -> None:
+        kinds = tuple(event.kind for event in events)
+        if not kinds:
+            if kind != "requested":
+                raise ValueError("A Drive backup must be requested first.")
+            return
+        if "completed" in kinds:
+            raise ValueError("The Drive backup operation is already complete.")
+        if kind == "requested":
+            raise ValueError("A Drive backup can only be requested once.")
+        if kind in {"authorization_granted", "authorization_denied"} and (
+            "authorization_required" not in kinds
+        ):
+            raise ValueError("Drive authorization was not requested.")
+        if kind == "ids_reserved" and "authorization_granted" not in kinds:
+            raise ValueError("Drive authorization was not granted.")
+        if kind == "folder_verified" and "ids_reserved" not in kinds:
+            raise ValueError("Drive IDs have not been reserved.")
+        if kind == "file_verified":
+            if "folder_verified" not in kinds:
+                raise ValueError("The Drive folder has not been verified.")
+            if any(
+                event.file_kind == file_kind for event in events if event.kind == "file_verified"
+            ):
+                raise ValueError("That Drive file was already verified.")
+        if kind == "completed":
+            verified = {event.file_kind for event in events if event.kind == "file_verified"}
+            if verified != {"docx", "pdf"}:
+                raise ValueError("Both final résumé files must be verified first.")
+
     @staticmethod
     def _file_id(events: tuple[Phase2DriveBackupEvent, ...], kind: str) -> str | None:
         return next(

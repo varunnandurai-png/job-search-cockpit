@@ -42,3 +42,28 @@ def test_store_creates_one_operation_for_one_verified_artifact(tmp_path) -> None
         assert store.view_for_artifact(artifact.artifact_id).status == "not_requested"
     finally:
         runtime.close()
+
+
+def test_store_rejects_a_file_result_before_backup_is_requested(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        store = DriveBackupStore(runtime.coordinator)
+        operation = store.create_operation(artifact)
+
+        with pytest.raises(ValueError, match="requested"):
+            store.append_event(
+                operation.id,
+                "file_verified",
+                file_kind="docx",
+                file_id="remote-docx-id",
+            )
+    finally:
+        runtime.close()
