@@ -44,6 +44,8 @@ class DriveCredentialStore(Protocol):
 
     def load_refresh_token(self) -> str | None: ...
 
+    def delete_refresh_token(self) -> None: ...
+
 
 class DriveAuthorizationService:
     """Creates one-use, session-bound Google OAuth requests without contacting Google."""
@@ -234,6 +236,19 @@ class MacOSKeychainCredentialStore:
                 "-w",
             ),
             f"{refresh_token}\n",
+        )
+
+    def delete_refresh_token(self) -> None:
+        self._runner(
+            (
+                "/usr/bin/security",
+                "delete-generic-password",
+                "-s",
+                _KEYCHAIN_SERVICE,
+                "-a",
+                _KEYCHAIN_ACCOUNT,
+            ),
+            "",
         )
 
     @staticmethod

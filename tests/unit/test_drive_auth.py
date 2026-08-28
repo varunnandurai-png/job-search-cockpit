@@ -50,6 +50,27 @@ def test_keychain_write_passes_refresh_token_on_stdin_not_argv() -> None:
     assert "drive.file" in command
 
 
+def test_keychain_delete_targets_only_the_drive_refresh_entry() -> None:
+    calls: list[tuple[tuple[str, ...], str]] = []
+    store = MacOSKeychainCredentialStore(lambda args, value: calls.append((args, value)))
+
+    store.delete_refresh_token()
+
+    assert calls == [
+        (
+            (
+                "/usr/bin/security",
+                "delete-generic-password",
+                "-s",
+                "com.job-search-cockpit.google-drive",
+                "-a",
+                "drive.file",
+            ),
+            "",
+        )
+    ]
+
+
 def test_callback_state_is_one_use_short_lived_and_session_bound() -> None:
     service = DriveAuthorizationService(client_id="desktop-client-id")
     started = service.begin("operation-1", "session-1", LOOPBACK_URI)
