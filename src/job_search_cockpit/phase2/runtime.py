@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import httpx
+
 from job_search_cockpit.config import Settings
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.application_drafts import (
@@ -12,6 +14,12 @@ from job_search_cockpit.phase2.assessment import AssessmentAuthorityService
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
 from job_search_cockpit.phase2.discovery import DiscoveryService
+from job_search_cockpit.phase2.drive_api import DriveApiClient
+from job_search_cockpit.phase2.drive_auth import (
+    DriveAuthorizationService,
+    MacOSKeychainCredentialStore,
+)
+from job_search_cockpit.phase2.drive_backup import DriveBackupStore, FinalResumeDriveBackupService
 from job_search_cockpit.phase2.finalisation import LocalResumeFinalisationService
 from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2MutationCoordinator
 from job_search_cockpit.phase2.resume_safety import (
@@ -38,8 +46,12 @@ class Phase2Runtime:
     resume_finalisation_service: LocalResumeFinalisationService
     reusable_answer_service: ReusableAnswerService
     application_draft_service: ApplicationDraftService
+    drive_backup_service: FinalResumeDriveBackupService | None
+    drive_http_client: httpx.Client | None
 
     def close(self) -> None:
+        if self.drive_http_client is not None:
+            self.drive_http_client.close()
         self.coordinator.dispose()
         self.instance_lock.release()
 
@@ -57,6 +69,28 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
     verification_service = VerifiedJobAuthorizationService(
         phase1_port, activation_service, coordinator
     )
+    finalisation_service = LocalResumeFinalisationService(
+        preparation_port,
+        phase1_port,
+        coordinator,
+        phase2_settings.final_resume_dir,
+    )
+    drive_http_client: httpx.Client | None = None
+    drive_backup_service: FinalResumeDriveBackupService | None = None
+    if settings.google_oauth_client_id:
+        drive_http_client = httpx.Client(
+            follow_redirects=False, timeout=httpx.Timeout(30.0, connect=10.0)
+        )
+        drive_backup_service = FinalResumeDriveBackupService(
+            finalisation_service=finalisation_service,
+            authorization_service=DriveAuthorizationService(
+                client_id=settings.google_oauth_client_id,
+                http_client=drive_http_client,
+                credential_store=MacOSKeychainCredentialStore(),
+            ),
+            drive_client=DriveApiClient(drive_http_client, finalisation_service),
+            store=DriveBackupStore(coordinator),
+        )
     return Phase2Runtime(
         coordinator=coordinator,
         instance_lock=instance_lock,
@@ -75,16 +109,13 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         resume_preparation_service=ResumePreparationService(
             preparation_port, ResumePreparationAttemptStore(coordinator)
         ),
-        resume_finalisation_service=LocalResumeFinalisationService(
-            preparation_port,
-            phase1_port,
-            coordinator,
-            phase2_settings.final_resume_dir,
-        ),
+        resume_finalisation_service=finalisation_service,
         reusable_answer_service=ReusableAnswerService(
             phase1_port, ReusableAnswerStore(coordinator)
         ),
         application_draft_service=ApplicationDraftService(
             preparation_port, ApplicationDraftStore(coordinator)
         ),
+        drive_backup_service=drive_backup_service,
+        drive_http_client=drive_http_client,
     )

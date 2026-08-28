@@ -8,6 +8,8 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from job_search_cockpit.phase2.drive_api import DriveFileMetadata
+from job_search_cockpit.phase2.drive_auth import DriveAuthorizationRequest
 from job_search_cockpit.phase2.finalisation import FinalResumeArtifact
 from job_search_cockpit.phase2.models import Phase2DriveBackupEvent, Phase2DriveBackupOperation
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
@@ -77,23 +79,11 @@ class _DriveAuthorization(Protocol):
 
     def begin(
         self, operation_id: str, session_id: str, redirect_uri: str
-    ) -> "_AuthorizationRequest": ...
-
-
-class _AuthorizationRequest(Protocol):
-    authorization_url: str
+    ) -> DriveAuthorizationRequest: ...
 
 
 class _FinalisationService(Protocol):
     def artifact_by_id(self, artifact_id: str) -> FinalResumeArtifact: ...
-
-
-class _DriveMetadata(Protocol):
-    id: str
-    name: str
-    mime_type: str
-    sha256: str | None
-    size: int | None
 
 
 class _DriveClient(Protocol):
@@ -103,7 +93,7 @@ class _DriveClient(Protocol):
 
     def create_or_verify_folder(
         self, access_token: str, folder_id: str, *, before_request: Callable[[], None]
-    ) -> _DriveMetadata: ...
+    ) -> DriveFileMetadata: ...
 
     def upload_verified_file(
         self,
@@ -114,11 +104,11 @@ class _DriveClient(Protocol):
         final_artifact_id: str,
         file_kind: Literal["docx", "pdf"],
         before_request: Callable[[], None],
-    ) -> _DriveMetadata: ...
+    ) -> DriveFileMetadata: ...
 
     def reconcile_folder(
         self, access_token: str, folder_id: str, *, before_request: Callable[[], None]
-    ) -> _DriveMetadata | None: ...
+    ) -> DriveFileMetadata | None: ...
 
     def reconcile_verified_file(
         self,
@@ -129,7 +119,7 @@ class _DriveClient(Protocol):
         file_kind: Literal["docx", "pdf"],
         folder_id: str,
         before_request: Callable[[], None],
-    ) -> _DriveMetadata | None: ...
+    ) -> DriveFileMetadata | None: ...
 
 
 class FinalResumeDriveBackupService:
