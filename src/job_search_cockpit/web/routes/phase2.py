@@ -50,6 +50,32 @@ def drive_oauth_callback(request: Request) -> Response:
     return PlainTextResponse("Google authorization completed safely.")
 
 
+@router.post("/phase-2/drive-backups")
+async def request_drive_backup(request: Request) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    artifact_id = _bounded(form.get("final_artifact_id"), 120)
+    if runtime is None or runtime.drive_backup_service is None or not artifact_id:
+        return PlainTextResponse("Drive backup is unavailable.", status_code=400)
+    callback_uri = (
+        f"http://127.0.0.1:{request.app.state.active_port}"
+        "/phase-2/drive-backups/oauth/callback"
+    )
+    try:
+        result = runtime.drive_backup_service.request_backup(
+            final_artifact_id=artifact_id,
+            session_id=request.app.state.launch_session.session_id,
+            redirect_uri=callback_uri,
+        )
+    except ValueError:
+        return PlainTextResponse("Drive backup is unavailable.", status_code=400)
+    if result.authorization_url is not None:
+        return RedirectResponse(result.authorization_url, status_code=303)
+    return RedirectResponse("/phase-2/review", status_code=303)
+
+
 @router.get("/phase-2", response_class=HTMLResponse)
 def activation_page(request: Request) -> Response:
     service = _activation_service(request)
