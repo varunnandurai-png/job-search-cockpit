@@ -59,7 +59,7 @@ def test_phase3_migration_head_and_append_only_triggers_are_effective(
 
     with sqlite3.connect(phase2_settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0016_private_drive_backup",
+            "0017_drive_reserved_file_ids",
         )
         connection.execute(
             """

@@ -28,7 +28,7 @@ def test_phase4_backup_metadata_is_append_only_and_excludes_sensitive_values(
 
     with sqlite3.connect(phase2_settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0016_private_drive_backup",
+            "0017_drive_reserved_file_ids",
         )
         available_tables = {
             row[0]
@@ -46,3 +46,9 @@ def test_phase4_backup_metadata_is_append_only_and_excludes_sensitive_values(
                 )
             }
             assert {f"prevent_{table}_update", f"prevent_{table}_delete"} <= trigger_names
+
+        event_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(phase2_drive_backup_events)")
+        }
+        assert {"folder_id", "docx_file_id", "pdf_file_id"} <= event_columns

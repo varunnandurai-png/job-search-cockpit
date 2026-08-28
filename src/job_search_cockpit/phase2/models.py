@@ -339,6 +339,8 @@ class Phase2DriveBackupEvent(Phase2Base):
     reason_code: Mapped[str | None] = mapped_column(String(64))
     file_kind: Mapped[str | None] = mapped_column(String(4))
     folder_id: Mapped[str | None] = mapped_column(String(255))
+    docx_file_id: Mapped[str | None] = mapped_column(String(255))
+    pdf_file_id: Mapped[str | None] = mapped_column(String(255))
     file_id: Mapped[str | None] = mapped_column(String(255))
     remote_name: Mapped[str | None] = mapped_column(String(260))
     remote_mime_type: Mapped[str | None] = mapped_column(String(120))
