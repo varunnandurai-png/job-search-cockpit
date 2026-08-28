@@ -187,6 +187,8 @@ class DriveBackupStore:
         reason_code: str | None = None,
         file_kind: Literal["docx", "pdf"] | None = None,
         folder_id: str | None = None,
+        docx_file_id: str | None = None,
+        pdf_file_id: str | None = None,
         file_id: str | None = None,
         remote_name: str | None = None,
         remote_mime_type: str | None = None,
@@ -198,6 +200,8 @@ class DriveBackupStore:
             reason_code=reason_code,
             file_kind=file_kind,
             folder_id=folder_id,
+            docx_file_id=docx_file_id,
+            pdf_file_id=pdf_file_id,
             file_id=file_id,
             remote_name=remote_name,
             remote_mime_type=remote_mime_type,
@@ -224,6 +228,8 @@ class DriveBackupStore:
                     reason_code=reason_code,
                     file_kind=file_kind,
                     folder_id=folder_id,
+                    docx_file_id=docx_file_id,
+                    pdf_file_id=pdf_file_id,
                     file_id=file_id,
                     remote_name=remote_name,
                     remote_mime_type=remote_mime_type,
@@ -234,6 +240,28 @@ class DriveBackupStore:
 
         self._coordinator.run(insert, "record_private_drive_backup_event")
 
+    def reserved_ids(self, operation_id: str) -> ReservedDriveIds | None:
+        with self._coordinator._session_factory() as session:
+            event = session.scalar(
+                select(Phase2DriveBackupEvent)
+                .where(
+                    Phase2DriveBackupEvent.operation_id == operation_id,
+                    Phase2DriveBackupEvent.kind == "ids_reserved",
+                )
+                .order_by(
+                    Phase2DriveBackupEvent.created_at.desc(),
+                    Phase2DriveBackupEvent.id.desc(),
+                )
+            )
+            if (
+                event is None
+                or event.folder_id is None
+                or event.docx_file_id is None
+                or event.pdf_file_id is None
+            ):
+                return None
+            return ReservedDriveIds(event.folder_id, event.docx_file_id, event.pdf_file_id)
+
     @staticmethod
     def _validate_event_fields(
         kind: str,
@@ -241,6 +269,8 @@ class DriveBackupStore:
         reason_code: str | None,
         file_kind: str | None,
         folder_id: str | None,
+        docx_file_id: str | None,
+        pdf_file_id: str | None,
         file_id: str | None,
         remote_name: str | None,
         remote_mime_type: str | None,
@@ -252,6 +282,8 @@ class DriveBackupStore:
         for value, limit in (
             (reason_code, 64),
             (folder_id, 255),
+            (docx_file_id, 255),
+            (pdf_file_id, 255),
             (file_id, 255),
             (remote_name, 260),
             (remote_mime_type, 120),
@@ -265,6 +297,10 @@ class DriveBackupStore:
             raise ValueError("The Drive backup file size is invalid.")
         if kind == "file_verified" and (file_kind is None or file_id is None):
             raise ValueError("A verified Drive file requires its kind and ID.")
+        if kind == "ids_reserved" and (
+            folder_id is None or docx_file_id is None or pdf_file_id is None
+        ):
+            raise ValueError("Reserved Drive IDs must include the folder and both files.")
 
     @staticmethod
     def _assert_event_order(

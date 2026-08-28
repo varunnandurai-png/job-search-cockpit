@@ -1,6 +1,10 @@
 import pytest
 
-from job_search_cockpit.phase2.drive_backup import DriveBackupStore, derive_drive_backup_status
+from job_search_cockpit.phase2.drive_backup import (
+    DriveBackupStore,
+    ReservedDriveIds,
+    derive_drive_backup_status,
+)
 from job_search_cockpit.phase2.finalisation import FINALISE_CONFIRMATION, FinaliseResumeCommand
 from tests.support.phase3 import build_synthetic_phase3_runtime
 
@@ -65,5 +69,39 @@ def test_store_rejects_a_file_result_before_backup_is_requested(tmp_path) -> Non
                 file_kind="docx",
                 file_id="remote-docx-id",
             )
+    finally:
+        runtime.close()
+
+
+def test_store_round_trips_all_reserved_ids_for_manual_retry(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        store = DriveBackupStore(runtime.coordinator)
+        operation = store.create_operation(artifact)
+        store.append_event(operation.id, "requested")
+        store.append_event(operation.id, "authorization_required")
+        store.append_event(operation.id, "authorization_granted")
+
+        store.append_event(
+            operation.id,
+            "ids_reserved",
+            folder_id="folder-1",
+            docx_file_id="docx-1",
+            pdf_file_id="pdf-1",
+        )
+
+        assert store.reserved_ids(operation.id) == ReservedDriveIds(
+            folder_id="folder-1",
+            docx_file_id="docx-1",
+            pdf_file_id="pdf-1",
+        )
     finally:
         runtime.close()
