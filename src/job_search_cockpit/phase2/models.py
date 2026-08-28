@@ -291,6 +291,62 @@ class Phase2FinalResumeArtifact(Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class Phase2DriveBackupOperation(AssessmentAuthorityFence, Phase2Base):
+    __tablename__ = "phase2_drive_backup_operations"
+    __table_args__ = (
+        UniqueConstraint("final_artifact_id"),
+        UniqueConstraint("job_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    final_artifact_id: Mapped[str] = mapped_column(ForeignKey("phase2_final_resume_artifacts.id"))
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("phase2_resume_document_attempts.id"))
+    job_id: Mapped[str] = mapped_column(String(120))
+    job_revision_id: Mapped[str] = mapped_column(String(120))
+    projection_fingerprint: Mapped[str] = mapped_column(String(64))
+    content_fingerprint: Mapped[str] = mapped_column(String(64))
+    requirement_ledger_fingerprint: Mapped[str] = mapped_column(String(64))
+    authorization_id: Mapped[str] = mapped_column(String(120))
+    authorization_nonce: Mapped[str] = mapped_column(String(120))
+    authorization_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    docx_name: Mapped[str] = mapped_column(String(260))
+    docx_sha256: Mapped[str] = mapped_column(String(64))
+    docx_byte_length: Mapped[int] = mapped_column(Integer)
+    pdf_name: Mapped[str] = mapped_column(String(260))
+    pdf_sha256: Mapped[str] = mapped_column(String(64))
+    pdf_byte_length: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2DriveBackupEvent(Phase2Base):
+    __tablename__ = "phase2_drive_backup_events"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('requested', 'authorization_required', 'authorization_granted', "
+            "'authorization_denied', 'ids_reserved', 'folder_verified', 'file_verified', "
+            "'pending', 'permission_expired', 'completed')",
+            name="ck_phase2_drive_backup_event_kind",
+        ),
+        CheckConstraint(
+            "file_kind IS NULL OR file_kind IN ('docx', 'pdf')",
+            name="ck_phase2_drive_backup_event_file_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    operation_id: Mapped[str] = mapped_column(ForeignKey("phase2_drive_backup_operations.id"))
+    kind: Mapped[str] = mapped_column(String(32))
+    reason_code: Mapped[str | None] = mapped_column(String(64))
+    file_kind: Mapped[str | None] = mapped_column(String(4))
+    folder_id: Mapped[str | None] = mapped_column(String(255))
+    file_id: Mapped[str | None] = mapped_column(String(255))
+    remote_name: Mapped[str | None] = mapped_column(String(260))
+    remote_mime_type: Mapped[str | None] = mapped_column(String(120))
+    remote_sha256: Mapped[str | None] = mapped_column(String(64))
+    remote_byte_length: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class Phase2DiscoveryRun(Phase2Base):
     __tablename__ = "phase2_discovery_runs"
 
