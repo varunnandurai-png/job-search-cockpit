@@ -1,6 +1,9 @@
 from urllib.parse import parse_qs, urlsplit
 
-from job_search_cockpit.phase2.drive_auth import DriveAuthorizationService
+from job_search_cockpit.phase2.drive_auth import (
+    DriveAuthorizationService,
+    MacOSKeychainCredentialStore,
+)
 
 LOOPBACK_URI = "http://127.0.0.1:8765/phase-2/drive-backups/oauth/callback"
 
@@ -23,3 +26,19 @@ def test_begin_uses_exact_scope_s256_state_and_loopback() -> None:
     assert query["code_challenge_method"] == ["S256"]
     assert query["redirect_uri"] == [LOOPBACK_URI]
     assert len(query["state"][0]) >= 43
+
+
+def test_keychain_write_passes_refresh_token_on_stdin_not_argv() -> None:
+    calls: list[tuple[tuple[str, ...], str]] = []
+
+    def runner(args: tuple[str, ...], value: str) -> None:
+        calls.append((args, value))
+
+    store = MacOSKeychainCredentialStore(runner)
+
+    store.store_refresh_token("refresh-secret")
+
+    command, supplied_input = calls[0]
+    assert "refresh-secret" not in command
+    assert supplied_input == "refresh-secret\n"
+    assert command[-1] == "-w"
