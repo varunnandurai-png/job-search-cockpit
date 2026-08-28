@@ -6,11 +6,13 @@ from tests.support.web import authenticated_test_app, build_test_app
 
 
 class SyntheticConfiguredDriveService:
+    status = "not_requested"
+
     def view_for_artifact(self, artifact_id: str) -> DriveBackupView:
         return DriveBackupView(
-            operation_id=None,
+            operation_id="operation-1" if self.status == "pending" else None,
             final_artifact_id=artifact_id,
-            status="not_requested",
+            status=self.status,
             reason_code="not_requested",
             folder_id=None,
             docx_file_id=None,
@@ -23,14 +25,16 @@ class SyntheticConfiguredDriveService:
         )
 
 
-def _configured_final_artifact(tmp_path):
+def _configured_final_artifact(tmp_path, *, status="not_requested"):
     finalisation = SyntheticRouteFinalisationService(tmp_path, finalised=True)
 
     def configure(prepared: PreparedVault) -> None:
         runtime = prepared.phase2_runtime
         assert isinstance(runtime, Phase2Runtime)
         runtime.resume_finalisation_service = finalisation  # type: ignore[assignment]
-        runtime.drive_backup_service = SyntheticConfiguredDriveService()  # type: ignore[assignment]
+        drive_service = SyntheticConfiguredDriveService()
+        drive_service.status = status
+        runtime.drive_backup_service = drive_service  # type: ignore[assignment]
 
     return configure
 
@@ -69,3 +73,13 @@ def test_verified_artifact_shows_the_visible_drive_backup_action(vault_settings,
 
     assert "Back up to Google Drive" in response.text
     assert 'name="final_artifact_id" value="final-artifact-1"' in response.text
+
+
+def test_pending_backup_shows_only_the_manual_retry_action(vault_settings, tmp_path) -> None:
+    with authenticated_test_app(
+        vault_settings, configure_prepared=_configured_final_artifact(tmp_path, status="pending")
+    ) as client:
+        response = client.get("/phase-2/resume-reviews/attempt-1")
+
+    assert "Retry backup" in response.text
+    assert "Back up to Google Drive" not in response.text

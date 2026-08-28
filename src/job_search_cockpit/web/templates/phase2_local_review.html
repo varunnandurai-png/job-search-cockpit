@@ -49,6 +49,11 @@
             <input type="hidden" name="final_artifact_id" value="{{ resume_artifact.artifact_id }}">
             <button type="submit" formtarget="_blank">Back up to Google Drive</button>
           </form>
+        {% elif drive_backup_view and drive_backup_view.status == 'pending' %}
+          <form method="post" action="/phase-2/drive-backups/{{ drive_backup_view.operation_id }}/retry">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit">Retry backup</button>
+          </form>
         {% endif %}
       {% else %}
         <p>No final files exist. Finalisation requires the exact confirmation and a local professional headshot.</p>
