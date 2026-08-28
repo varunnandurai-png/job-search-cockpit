@@ -16,6 +16,32 @@ class _AuthorizationWithAccess:
         return "synthetic-access"
 
 
+class _AuthorizationAfterConsent:
+    def access_token(self, before_request):
+        before_request()
+        return None
+
+    def begin(self, operation_id, session_id, redirect_uri):
+        assert operation_id
+        assert session_id == "session-1"
+        assert redirect_uri.endswith("/oauth/callback")
+        return type(
+            "Request",
+            (),
+            {
+                "state": "state-1",
+                "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?state=state-1",
+            },
+        )()
+
+    def complete(self, state, code, session_id, before_request):
+        assert state == "state-1"
+        assert code == "synthetic-code"
+        assert session_id == "session-1"
+        before_request()
+        return "synthetic-access"
+
+
 class _DriveThatRecordsVerifiedWork:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -263,5 +289,40 @@ def test_manual_retry_reconciles_ids_and_uploads_only_the_missing_pdf(tmp_path) 
             "reconcile:pdf-1",
             "pdf",
         ]
+    finally:
+        runtime.close()
+
+
+def test_one_use_authorization_continues_only_the_bound_backup(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        drive = _DriveThatRecordsVerifiedWork()
+        service = FinalResumeDriveBackupService(
+            finalisation_service=runtime.service,
+            authorization_service=_AuthorizationAfterConsent(),
+            drive_client=drive,
+            store=DriveBackupStore(runtime.coordinator),
+        )
+
+        requested = service.request_backup(
+            final_artifact_id=artifact.artifact_id,
+            session_id="session-1",
+            redirect_uri="http://127.0.0.1:8765/phase-2/drive-backups/oauth/callback",
+        )
+        completed = service.complete_authorization(
+            state="state-1", code="synthetic-code", session_id="session-1"
+        )
+
+        assert requested.view.status == "sign_in_required"
+        assert completed.status == "backed_up"
+        assert drive.calls == ["generate_ids", "folder", "docx", "pdf"]
     finally:
         runtime.close()

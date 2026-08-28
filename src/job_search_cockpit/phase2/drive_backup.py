@@ -81,6 +81,10 @@ class _DriveAuthorization(Protocol):
         self, operation_id: str, session_id: str, redirect_uri: str
     ) -> DriveAuthorizationRequest: ...
 
+    def complete(
+        self, state: str, code: str, session_id: str, before_request: Callable[[], None]
+    ) -> str: ...
+
 
 class _FinalisationService(Protocol):
     def artifact_by_id(self, artifact_id: str) -> FinalResumeArtifact: ...
@@ -139,6 +143,7 @@ class FinalResumeDriveBackupService:
         self._store = store
         self._active_operation_ids: set[str] = set()
         self._active_lock = RLock()
+        self._authorization_operations: dict[str, str] = {}
 
     def request_backup(
         self, *, final_artifact_id: str, session_id: str, redirect_uri: str
@@ -154,6 +159,8 @@ class FinalResumeDriveBackupService:
             access_token = self._authorization_service.access_token(before_request)
             if access_token is None:
                 request = self._authorization_service.begin(operation.id, session_id, redirect_uri)
+                with self._active_lock:
+                    self._authorization_operations[request.state] = operation.id
                 self._store.append_event(operation.id, "authorization_required")
                 return BackupRequestResult(
                     view=self._store.view_for_artifact(final_artifact_id),
@@ -168,6 +175,26 @@ class FinalResumeDriveBackupService:
     def view_for_artifact(self, final_artifact_id: str) -> DriveBackupView:
         self._artifact_by_id(final_artifact_id)
         return self._store.view_for_artifact(final_artifact_id)
+
+    def complete_authorization(self, *, state: str, code: str, session_id: str) -> DriveBackupView:
+        with self._active_lock:
+            operation_id = self._authorization_operations.pop(state, None)
+        if operation_id is None:
+            raise ValueError("The Drive authorization request is unavailable.")
+        operation = self._store.operation_by_id(operation_id)
+        self._enter(operation.id)
+        try:
+            def before_request() -> None:
+                self._artifact_by_id(operation.final_artifact_id)
+
+            access_token = self._authorization_service.complete(
+                state, code, session_id, before_request
+            )
+            self._artifact_by_id(operation.final_artifact_id)
+            self._store.append_event(operation.id, "authorization_granted")
+            return self._upload_pair(operation.id, operation.final_artifact_id, access_token)
+        finally:
+            self._leave(operation.id)
 
     def retry_backup(self, operation_id: str) -> DriveBackupView:
         operation = self._store.operation_by_id(operation_id)
