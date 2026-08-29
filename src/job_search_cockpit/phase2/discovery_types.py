@@ -1,11 +1,30 @@
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from job_search_cockpit.phase2.provider_config import ProviderLimits
 
 _APIFY_PROVIDER_IDS = frozenset(
     {"apify-linkedin", "apify-naukri", "apify-glassdoor"}
+)
+ProviderFailureCode = Literal[
+    "authentication_failed",
+    "quota_or_cost_limit",
+    "timeout",
+    "provider_unavailable",
+    "schema_mismatch",
+    "invalid_listing",
+]
+PROVIDER_FAILURE_CODES: frozenset[ProviderFailureCode] = frozenset(
+    {
+        "authentication_failed",
+        "quota_or_cost_limit",
+        "timeout",
+        "provider_unavailable",
+        "schema_mismatch",
+        "invalid_listing",
+    }
 )
 
 
@@ -57,5 +76,15 @@ class ProviderOutcome:
     listings: tuple[ProviderListing, ...] = ()
     failure_code: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.failure_code is not None and self.failure_code not in PROVIDER_FAILURE_CODES:
+            raise ValueError("provider outcome has an unsupported failure code")
 
-__all__ = ["ProviderListing", "ProviderOutcome", "ProviderRequest"]
+
+__all__ = [
+    "PROVIDER_FAILURE_CODES",
+    "ProviderFailureCode",
+    "ProviderListing",
+    "ProviderOutcome",
+    "ProviderRequest",
+]

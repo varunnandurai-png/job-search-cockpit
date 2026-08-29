@@ -6,7 +6,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from job_search_cockpit.phase2.discovery_types import ProviderListing, ProviderRequest
+from job_search_cockpit.phase2.discovery_types import (
+    ProviderListing,
+    ProviderOutcome,
+    ProviderRequest,
+)
 from job_search_cockpit.phase2.provider_config import (
     ProviderConfigurationError,
     ProviderCredentials,
@@ -21,6 +25,7 @@ from job_search_cockpit.phase2.providers import (
     ApifyProvider,
     JSearchProvider,
     ProviderResponseError,
+    _require_bounded_client,
     create_provider_http_client,
 )
 
@@ -30,8 +35,11 @@ NOW = datetime(2026, 8, 29, 0, 0, tzinfo=UTC)
 def test_credentials_are_redacted_and_env_rejects_unknown_keys(tmp_path: Path) -> None:
     env = tmp_path / ".env"
     env.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+    env.chmod(0o600)
 
-    credentials = ProviderCredentials.from_environment({}, dotenv_path=env)
+    credentials = ProviderCredentials.from_environment(
+        {}, dotenv_path=env, approved_dotenv_path=env
+    )
 
     assert "a" not in repr(credentials)
     assert "j" not in repr(credentials)
@@ -82,6 +90,68 @@ def test_credentials_fail_closed_and_remain_immutable(monkeypatch: pytest.Monkey
         credentials.apify_token = "changed"  # type: ignore[misc]
 
 
+def test_credentials_require_an_exact_private_dotenv_anchor(tmp_path: Path) -> None:
+    env = tmp_path / "provider-data" / ".env"
+    env.parent.mkdir()
+    env.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+    env.chmod(0o600)
+    different = tmp_path / "other-data" / ".env"
+    different.parent.mkdir()
+    different.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+    different.chmod(0o600)
+
+    with pytest.raises(ProviderConfigurationError, match="approved dotenv path"):
+        ProviderCredentials.from_environment({}, dotenv_path=env)
+    with pytest.raises(ProviderConfigurationError, match="approved dotenv path"):
+        ProviderCredentials.from_environment(
+            {}, dotenv_path=env, approved_dotenv_path=different
+        )
+
+    assert ProviderCredentials.from_environment(
+        {}, dotenv_path=env, approved_dotenv_path=env
+    ) == ProviderCredentials("a", "j")
+
+
+def test_credentials_reject_an_untrusted_dotenv_file_shape(tmp_path: Path) -> None:
+    wrong_name = tmp_path / "provider.env"
+    wrong_name.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+    wrong_name.chmod(0o600)
+    with pytest.raises(ProviderConfigurationError, match=r"named .env"):
+        ProviderCredentials.from_environment(
+            {}, dotenv_path=wrong_name, approved_dotenv_path=wrong_name
+        )
+
+    loose = tmp_path / ".env"
+    loose.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+    loose.chmod(0o644)
+    with pytest.raises(ProviderConfigurationError, match="owner-only"):
+        ProviderCredentials.from_environment({}, dotenv_path=loose, approved_dotenv_path=loose)
+
+    directory = tmp_path / "directory" / ".env"
+    directory.parent.mkdir()
+    directory.mkdir()
+    with pytest.raises(ProviderConfigurationError, match="regular file"):
+        ProviderCredentials.from_environment(
+            {}, dotenv_path=directory, approved_dotenv_path=directory
+        )
+
+    link_parent = tmp_path / "linked"
+    link_parent.mkdir()
+    link = link_parent / ".env"
+    link.symlink_to(loose)
+    with pytest.raises(ProviderConfigurationError, match="symlink"):
+        ProviderCredentials.from_environment({}, dotenv_path=link, approved_dotenv_path=link)
+
+
+def test_credentials_reject_a_dotenv_file_over_the_bounded_size(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n" + "#" * 8193, encoding="utf-8")
+    env.chmod(0o600)
+
+    with pytest.raises(ProviderConfigurationError, match="size limit"):
+        ProviderCredentials.from_environment({}, dotenv_path=env, approved_dotenv_path=env)
+
+
 @pytest.mark.parametrize(
     ("provider_id", "listing_limit", "max_charge_usd", "message"),
     [
@@ -123,12 +193,29 @@ def test_provider_limits_have_the_approved_values() -> None:
     )
 
 
-def test_provider_http_client_uses_fixed_timeouts_without_redirects_or_retries() -> None:
+def test_provider_outcome_rejects_unbounded_failure_codes() -> None:
+    with pytest.raises(ValueError, match="failure code"):
+        ProviderOutcome(provider_id="jsearch", failure_code="arbitrary_failure")
+
+    assert ProviderOutcome(provider_id="jsearch", failure_code="timeout").failure_code == "timeout"
+
+
+def test_provider_http_client_uses_fixed_timeouts_without_redirects() -> None:
     with create_provider_http_client() as client:
         assert client.timeout.connect == 10.0
         assert client.timeout.read == 90.0
         assert client.follow_redirects is False
-        assert client._transport._pool._retries == 0  # type: ignore[attr-defined]
+
+
+def test_provider_rejects_an_http_transport_configured_with_retries() -> None:
+    client = httpx.Client(
+        transport=httpx.HTTPTransport(retries=1),
+        timeout=httpx.Timeout(90.0, connect=10.0),
+        follow_redirects=False,
+    )
+
+    with pytest.raises(ValueError, match="retries"):
+        _require_bounded_client(client)
 
 
 @pytest.mark.parametrize(

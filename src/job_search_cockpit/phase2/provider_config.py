@@ -1,4 +1,5 @@
 import os
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -10,6 +11,7 @@ class ProviderConfigurationError(ValueError):
 
 
 _ALLOWED_ENV_KEYS = frozenset({"APIFY_API_TOKEN", "JSEARCH_API_KEY"})
+_MAX_DOTENV_BYTES = 8_192
 
 
 def read_provider_env_file(path: Path) -> dict[str, str]:
@@ -57,9 +59,14 @@ class ProviderCredentials:
         environment: Mapping[str, str] | None = None,
         *,
         dotenv_path: Path | None = None,
+        approved_dotenv_path: Path | None = None,
     ) -> "ProviderCredentials":
         source = os.environ if environment is None else environment
-        dotenv = read_provider_env_file(dotenv_path) if dotenv_path is not None else {}
+        if dotenv_path is not None:
+            _validate_dotenv_path(dotenv_path, approved_dotenv_path)
+            dotenv = read_provider_env_file(dotenv_path)
+        else:
+            dotenv = {}
         apify_token = source.get("APIFY_API_TOKEN") or dotenv.get("APIFY_API_TOKEN", "")
         jsearch_key = source.get("JSEARCH_API_KEY") or dotenv.get("JSEARCH_API_KEY", "")
         if not apify_token:
@@ -67,6 +74,31 @@ class ProviderCredentials:
         if not jsearch_key:
             raise ProviderConfigurationError("JSearch credentials are unavailable.")
         return cls(apify_token=apify_token, jsearch_key=jsearch_key)
+
+
+def _validate_dotenv_path(path: Path, approved_path: Path | None) -> None:
+    if approved_path is None:
+        raise ProviderConfigurationError("Provider dotenv path requires an approved dotenv path.")
+    if path.name != ".env":
+        raise ProviderConfigurationError("Provider dotenv file must be named .env.")
+    if path.is_symlink() or approved_path.is_symlink():
+        raise ProviderConfigurationError("Provider dotenv file must not be a symlink.")
+    try:
+        resolved_path = path.resolve(strict=True)
+        resolved_approved_path = approved_path.resolve(strict=True)
+        file_status = path.stat()
+    except OSError as error:
+        raise ProviderConfigurationError("Provider environment file is unavailable.") from error
+    if resolved_path != resolved_approved_path:
+        raise ProviderConfigurationError(
+            "Provider dotenv path does not match the approved dotenv path."
+        )
+    if not stat.S_ISREG(file_status.st_mode):
+        raise ProviderConfigurationError("Provider dotenv path must be a regular file.")
+    if file_status.st_mode & 0o077:
+        raise ProviderConfigurationError("Provider dotenv file permissions must be owner-only.")
+    if file_status.st_size > _MAX_DOTENV_BYTES:
+        raise ProviderConfigurationError("Provider dotenv file exceeds the size limit.")
 
 
 @dataclass(frozen=True, slots=True)

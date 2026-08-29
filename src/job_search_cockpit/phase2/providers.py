@@ -7,7 +7,11 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import httpx
 
-from job_search_cockpit.phase2.discovery_types import ProviderListing, ProviderRequest
+from job_search_cockpit.phase2.discovery_types import (
+    PROVIDER_FAILURE_CODES,
+    ProviderListing,
+    ProviderRequest,
+)
 from job_search_cockpit.phase2.provider_config import ProviderCredentials
 
 APIFY_LINKEDIN_ACTOR = "curious_coder/linkedin-jobs-scraper"
@@ -30,23 +34,11 @@ _APIFY_LISTING_HOSTS = {
     APIFY_NAUKRI_ACTOR: frozenset({"www.naukri.com"}),
     APIFY_GLASSDOOR_ACTOR: frozenset({"www.glassdoor.com"}),
 }
-_FAILURE_CODES = frozenset(
-    {
-        "authentication_failed",
-        "quota_or_cost_limit",
-        "timeout",
-        "provider_unavailable",
-        "schema_mismatch",
-        "invalid_listing",
-    }
-)
-
-
 class ProviderResponseError(RuntimeError):
     """Raised with a bounded provider failure code and safe detail."""
 
     def __init__(self, code: str, detail: str | None = None) -> None:
-        if code not in _FAILURE_CODES:
+        if code not in PROVIDER_FAILURE_CODES:
             raise ValueError("unsupported provider failure code")
         self.code = code
         super().__init__(f"{code}: {detail}" if detail else code)
@@ -267,6 +259,16 @@ def _decimal_parameter(value: Decimal) -> str:
 def _require_bounded_client(client: httpx.Client) -> None:
     if client.follow_redirects or client.timeout.connect != 10.0 or client.timeout.read != 90.0:
         raise ValueError("provider HTTP client is not configured safely")
+    if _http_transport_retry_count(client) != 0:
+        raise ValueError("provider HTTP client must disable retries")
+
+
+def _http_transport_retry_count(client: httpx.Client) -> int:
+    """Read httpx's retry setting in one boundary until it has a public accessor."""
+    transport = client._transport
+    if not isinstance(transport, httpx.HTTPTransport):
+        return 0
+    return transport._pool._retries
 
 
 def _http_failure(status_code: int) -> ProviderResponseError:
