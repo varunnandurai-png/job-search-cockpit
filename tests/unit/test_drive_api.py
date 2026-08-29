@@ -212,5 +212,9 @@ def test_retry_reconciles_only_the_reserved_file_id(tmp_path: Path) -> None:
     )
 
     assert result is not None
-    assert str(requests[0].url) == "https://www.googleapis.com/drive/v3/files/docx-1"
+    assert str(requests[0].url) == (
+        "https://www.googleapis.com/drive/v3/files/docx-1?"
+        "fields=id%2Cname%2CmimeType%2Cparents%2Csize%2Csha256Checksum%2C"
+        "trashed%2Cshared%2CisAppAuthorized"
+    )
     runtime.close()

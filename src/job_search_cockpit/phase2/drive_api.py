@@ -18,6 +18,9 @@ _FILES_URL = "https://www.googleapis.com/drive/v3/files"
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _FOLDER_NAME = "Job Search Cockpit"
 _UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable"
+_METADATA_FIELDS = (
+    "id,name,mimeType,parents,size,sha256Checksum,trashed,shared,isAppAuthorized"
+)
 
 
 class DriveApiError(ValueError):
@@ -287,6 +290,7 @@ class DriveApiClient:
         try:
             response = self._http_client.get(
                 f"{_FILES_URL}/{quote(file_id, safe='')}",
+                params={"fields": _METADATA_FIELDS},
                 headers={"Authorization": f"Bearer {access_token}"},
             )
         except httpx.HTTPError as error:
