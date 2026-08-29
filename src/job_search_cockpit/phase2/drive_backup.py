@@ -151,6 +151,8 @@ class FinalResumeDriveBackupService:
         self, *, final_artifact_id: str, session_id: str, redirect_uri: str
     ) -> BackupRequestResult:
         artifact = self._artifact_by_id(final_artifact_id)
+        if self._store.view_for_artifact(artifact.artifact_id).status != "not_requested":
+            raise ValueError("The Drive backup is already awaiting completion.")
         operation = self._store.create_operation(artifact)
         self._enter(operation.id)
         try:
