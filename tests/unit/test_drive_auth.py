@@ -163,3 +163,34 @@ def test_invalid_grant_removes_only_the_refresh_permission() -> None:
         service.access_token(lambda: None)
 
     assert deleted == ["deleted"]
+
+
+def test_refresh_rejects_a_returned_scope_other_than_drive_file() -> None:
+    class CredentialStore:
+        def store_refresh_token(self, refresh_token: str) -> None:
+            raise AssertionError(refresh_token)
+
+        def load_refresh_token(self) -> str | None:
+            return "refresh-secret"
+
+        def delete_refresh_token(self) -> None:
+            raise AssertionError("permission must remain available")
+
+    service = DriveAuthorizationService(
+        client_id="desktop-client-id",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    json={
+                        "access_token": "short-lived-access",
+                        "scope": "https://www.googleapis.com/auth/drive.readonly",
+                    },
+                )
+            )
+        ),
+        credential_store=CredentialStore(),
+    )
+
+    with pytest.raises(DriveAuthorizationError, match="invalid"):
+        service.access_token(lambda: None)

@@ -186,7 +186,12 @@ class DriveAuthorizationService:
                 "The Google authorization response is invalid."
             ) from error
         access_token = payload.get("access_token") if isinstance(payload, dict) else None
-        if not isinstance(access_token, str) or not 1 <= len(access_token) <= 4096:
+        returned_scope = payload.get("scope") if isinstance(payload, dict) else None
+        if (
+            not isinstance(access_token, str)
+            or not 1 <= len(access_token) <= 4096
+            or (returned_scope is not None and returned_scope != _DRIVE_FILE_SCOPE)
+        ):
             raise DriveAuthorizationError("The Google authorization response is invalid.")
         return access_token
 
