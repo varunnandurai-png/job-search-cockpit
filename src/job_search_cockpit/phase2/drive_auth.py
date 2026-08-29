@@ -23,6 +23,10 @@ class DriveAuthorizationError(ValueError):
     """Raised when a private Drive authorization request is invalid or unavailable."""
 
 
+class DrivePermissionExpiredError(DriveAuthorizationError):
+    """Raised only after the exact stored Drive permission is invalidated."""
+
+
 @dataclass(frozen=True, slots=True)
 class DriveAuthorizationRequest:
     operation_id: str
@@ -177,7 +181,7 @@ class DriveAuthorizationService:
         if response.status_code != 200:
             if _is_invalid_grant(response):
                 self._credential_store.delete_refresh_token()
-                raise DriveAuthorizationError("Google permission expired.")
+                raise DrivePermissionExpiredError("Google permission expired.")
             raise DriveAuthorizationError("Google authorization was not accepted.")
         try:
             payload = response.json()

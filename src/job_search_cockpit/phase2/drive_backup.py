@@ -9,7 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from job_search_cockpit.phase2.drive_api import DriveApiError, DriveFileMetadata
-from job_search_cockpit.phase2.drive_auth import DriveAuthorizationRequest
+from job_search_cockpit.phase2.drive_auth import (
+    DriveAuthorizationRequest,
+    DrivePermissionExpiredError,
+)
 from job_search_cockpit.phase2.finalisation import FinalResumeArtifact
 from job_search_cockpit.phase2.models import Phase2DriveBackupEvent, Phase2DriveBackupOperation
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
@@ -160,7 +163,13 @@ class FinalResumeDriveBackupService:
             def before_request() -> None:
                 self._artifact_by_id(final_artifact_id)
 
-            access_token = self._authorization_service.access_token(before_request)
+            try:
+                access_token = self._authorization_service.access_token(before_request)
+            except DrivePermissionExpiredError:
+                self._store.append_event(
+                    operation.id, "permission_expired", reason_code="permission_expired"
+                )
+                return BackupRequestResult(self._store.view_for_artifact(final_artifact_id))
             if access_token is None:
                 request = self._authorization_service.begin(operation.id, session_id, redirect_uri)
                 with self._active_lock:
@@ -227,7 +236,13 @@ class FinalResumeDriveBackupService:
             def before_request() -> None:
                 self._artifact_by_id(artifact.artifact_id)
 
-            access_token = self._authorization_service.access_token(before_request)
+            try:
+                access_token = self._authorization_service.access_token(before_request)
+            except DrivePermissionExpiredError:
+                self._store.append_event(
+                    operation.id, "permission_expired", reason_code="permission_expired"
+                )
+                return self._store.view_for_artifact(artifact.artifact_id)
             if access_token is None:
                 self._store.append_event(
                     operation.id, "permission_expired", reason_code="sign_in_required"

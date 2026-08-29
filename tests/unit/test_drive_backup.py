@@ -1,6 +1,7 @@
 import pytest
 
 from job_search_cockpit.phase2.drive_api import DriveApiError
+from job_search_cockpit.phase2.drive_auth import DrivePermissionExpiredError
 from job_search_cockpit.phase2.drive_backup import (
     DriveBackupStore,
     FinalResumeDriveBackupService,
@@ -123,6 +124,12 @@ class _UnavailableDrive(_DriveThatRecordsVerifiedWork):
     def generate_ids(self, access_token, count, *, before_request):
         before_request()
         raise DriveApiError("Google Drive is temporarily unavailable.")
+
+
+class _AuthorizationWithExpiredPermission:
+    def access_token(self, before_request):
+        before_request()
+        raise DrivePermissionExpiredError("Google permission expired.")
 
 
 @pytest.mark.parametrize(
@@ -284,6 +291,38 @@ def test_temporary_drive_failure_becomes_pending_for_a_manual_retry(tmp_path) ->
         assert result.authorization_url is None
         assert result.view.status == "pending"
         assert result.view.reason_code == "drive_unavailable"
+    finally:
+        runtime.close()
+
+
+def test_expired_drive_permission_is_recorded_without_drive_work(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        drive = _DriveThatRecordsVerifiedWork()
+        service = FinalResumeDriveBackupService(
+            finalisation_service=runtime.service,
+            authorization_service=_AuthorizationWithExpiredPermission(),
+            drive_client=drive,
+            store=DriveBackupStore(runtime.coordinator),
+        )
+
+        result = service.request_backup(
+            final_artifact_id=artifact.artifact_id,
+            session_id="session-1",
+            redirect_uri="http://127.0.0.1:8765/phase-2/drive-backups/oauth/callback",
+        )
+
+        assert result.view.status == "permission_expired"
+        assert result.view.reason_code == "permission_expired"
+        assert drive.calls == []
     finally:
         runtime.close()
 
