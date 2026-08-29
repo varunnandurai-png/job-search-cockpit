@@ -259,8 +259,15 @@ def _decimal_parameter(value: Decimal) -> str:
 def _require_bounded_client(client: httpx.Client) -> None:
     if client.follow_redirects or client.timeout.connect != 10.0 or client.timeout.read != 90.0:
         raise ValueError("provider HTTP client is not configured safely")
+    if _has_custom_mounts(client):
+        raise ValueError("provider HTTP client must not use custom mounts")
     if _http_transport_retry_count(client) != 0:
         raise ValueError("provider HTTP client must disable retries")
+
+
+def _has_custom_mounts(client: httpx.Client) -> bool:
+    """Inspect httpx's mount map in one boundary until it has a public accessor."""
+    return any(transport is not None for transport in client._mounts.values())
 
 
 def _http_transport_retry_count(client: httpx.Client) -> int:

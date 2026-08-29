@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.discovery_types import (
     ProviderListing,
     ProviderOutcome,
@@ -33,20 +34,20 @@ NOW = datetime(2026, 8, 29, 0, 0, tzinfo=UTC)
 
 
 def test_credentials_are_redacted_and_env_rejects_unknown_keys(tmp_path: Path) -> None:
-    env = tmp_path / ".env"
+    settings = Phase2Settings(data_dir=tmp_path / "provider-data")
+    settings.data_dir.mkdir()
+    env = settings.data_dir / ".env"
     env.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
     env.chmod(0o600)
 
-    credentials = ProviderCredentials.from_environment(
-        {}, dotenv_path=env, approved_dotenv_path=env
-    )
+    credentials = ProviderCredentials.from_environment({}, phase2_settings=settings)
 
     assert "a" not in repr(credentials)
     assert "j" not in repr(credentials)
 
     env.write_text("HOME=x\n", encoding="utf-8")
     with pytest.raises(ProviderConfigurationError, match="unsupported key"):
-        read_provider_env_file(env)
+        read_provider_env_file(settings)
 
 
 def test_micro_apify_request_rejects_cost_above_ten_cents() -> None:
@@ -71,11 +72,14 @@ def test_micro_apify_request_rejects_cost_above_ten_cents() -> None:
 def test_provider_env_file_rejects_invalid_values(
     contents: str, message: str, tmp_path: Path
 ) -> None:
-    env = tmp_path / ".env"
+    settings = Phase2Settings(data_dir=tmp_path / "provider-data")
+    settings.data_dir.mkdir()
+    env = settings.data_dir / ".env"
     env.write_text(contents, encoding="utf-8")
+    env.chmod(0o600)
 
     with pytest.raises(ProviderConfigurationError, match=message):
-        read_provider_env_file(env)
+        read_provider_env_file(settings)
 
 
 def test_credentials_fail_closed_and_remain_immutable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,66 +94,56 @@ def test_credentials_fail_closed_and_remain_immutable(monkeypatch: pytest.Monkey
         credentials.apify_token = "changed"  # type: ignore[misc]
 
 
-def test_credentials_require_an_exact_private_dotenv_anchor(tmp_path: Path) -> None:
-    env = tmp_path / "provider-data" / ".env"
-    env.parent.mkdir()
-    env.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+def test_credentials_derive_only_the_trusted_phase2_dotenv_path(tmp_path: Path) -> None:
+    settings = Phase2Settings(data_dir=tmp_path / "provider-data")
+    settings.data_dir.mkdir()
+    env = settings.data_dir / ".env"
+    env.write_text("APIFY_API_TOKEN=trusted\nJSEARCH_API_KEY=trusted\n", encoding="utf-8")
     env.chmod(0o600)
     different = tmp_path / "other-data" / ".env"
     different.parent.mkdir()
-    different.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+    different.write_text("APIFY_API_TOKEN=outside\nJSEARCH_API_KEY=outside\n", encoding="utf-8")
     different.chmod(0o600)
 
-    with pytest.raises(ProviderConfigurationError, match="approved dotenv path"):
-        ProviderCredentials.from_environment({}, dotenv_path=env)
-    with pytest.raises(ProviderConfigurationError, match="approved dotenv path"):
-        ProviderCredentials.from_environment(
-            {}, dotenv_path=env, approved_dotenv_path=different
-        )
-
     assert ProviderCredentials.from_environment(
-        {}, dotenv_path=env, approved_dotenv_path=env
-    ) == ProviderCredentials("a", "j")
+        {}, phase2_settings=settings
+    ) == ProviderCredentials("trusted", "trusted")
 
 
 def test_credentials_reject_an_untrusted_dotenv_file_shape(tmp_path: Path) -> None:
-    wrong_name = tmp_path / "provider.env"
-    wrong_name.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
-    wrong_name.chmod(0o600)
-    with pytest.raises(ProviderConfigurationError, match=r"named .env"):
-        ProviderCredentials.from_environment(
-            {}, dotenv_path=wrong_name, approved_dotenv_path=wrong_name
-        )
-
-    loose = tmp_path / ".env"
+    settings = Phase2Settings(data_dir=tmp_path / "provider-data")
+    settings.data_dir.mkdir()
+    loose = settings.data_dir / ".env"
     loose.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
     loose.chmod(0o644)
     with pytest.raises(ProviderConfigurationError, match="owner-only"):
-        ProviderCredentials.from_environment({}, dotenv_path=loose, approved_dotenv_path=loose)
+        ProviderCredentials.from_environment({}, phase2_settings=settings)
 
-    directory = tmp_path / "directory" / ".env"
-    directory.parent.mkdir()
+    loose.unlink()
+    directory = settings.data_dir / ".env"
     directory.mkdir()
     with pytest.raises(ProviderConfigurationError, match="regular file"):
-        ProviderCredentials.from_environment(
-            {}, dotenv_path=directory, approved_dotenv_path=directory
-        )
+        ProviderCredentials.from_environment({}, phase2_settings=settings)
 
-    link_parent = tmp_path / "linked"
-    link_parent.mkdir()
-    link = link_parent / ".env"
-    link.symlink_to(loose)
+    directory.rmdir()
+    target = tmp_path / "untrusted.env"
+    target.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n", encoding="utf-8")
+    target.chmod(0o600)
+    link = settings.data_dir / ".env"
+    link.symlink_to(target)
     with pytest.raises(ProviderConfigurationError, match="symlink"):
-        ProviderCredentials.from_environment({}, dotenv_path=link, approved_dotenv_path=link)
+        ProviderCredentials.from_environment({}, phase2_settings=settings)
 
 
 def test_credentials_reject_a_dotenv_file_over_the_bounded_size(tmp_path: Path) -> None:
-    env = tmp_path / ".env"
+    settings = Phase2Settings(data_dir=tmp_path / "provider-data")
+    settings.data_dir.mkdir()
+    env = settings.data_dir / ".env"
     env.write_text("APIFY_API_TOKEN=a\nJSEARCH_API_KEY=j\n" + "#" * 8193, encoding="utf-8")
     env.chmod(0o600)
 
     with pytest.raises(ProviderConfigurationError, match="size limit"):
-        ProviderCredentials.from_environment({}, dotenv_path=env, approved_dotenv_path=env)
+        ProviderCredentials.from_environment({}, phase2_settings=settings)
 
 
 @pytest.mark.parametrize(
@@ -215,6 +209,17 @@ def test_provider_rejects_an_http_transport_configured_with_retries() -> None:
     )
 
     with pytest.raises(ValueError, match="retries"):
+        _require_bounded_client(client)
+
+
+def test_provider_rejects_an_https_mount_before_it_can_bypass_retry_limits() -> None:
+    client = httpx.Client(
+        mounts={"https://": httpx.HTTPTransport(retries=1)},
+        timeout=httpx.Timeout(90.0, connect=10.0),
+        follow_redirects=False,
+    )
+
+    with pytest.raises(ValueError, match="custom mounts"):
         _require_bounded_client(client)
 
 
