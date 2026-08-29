@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from job_search_cockpit.phase2.drive_api import DriveFileMetadata
+from job_search_cockpit.phase2.drive_api import DriveApiError, DriveFileMetadata
 from job_search_cockpit.phase2.drive_auth import DriveAuthorizationRequest
 from job_search_cockpit.phase2.finalisation import FinalResumeArtifact
 from job_search_cockpit.phase2.models import Phase2DriveBackupEvent, Phase2DriveBackupOperation
@@ -231,63 +231,66 @@ class FinalResumeDriveBackupService:
                     operation.id, "permission_expired", reason_code="sign_in_required"
                 )
                 return self._store.view_for_artifact(artifact.artifact_id)
-            reserved = self._store.reserved_ids(operation.id)
-            if reserved is None or self._drive_client.reconcile_folder(
-                access_token, reserved.folder_id, before_request=before_request
-            ) is None:
-                return self._pending(
-                    operation.id, artifact.artifact_id, "remote_verification_failed"
+            try:
+                reserved = self._store.reserved_ids(operation.id)
+                if reserved is None or self._drive_client.reconcile_folder(
+                    access_token, reserved.folder_id, before_request=before_request
+                ) is None:
+                    return self._pending(
+                        operation.id, artifact.artifact_id, "remote_verification_failed"
+                    )
+                verified_file_ids = {
+                    kind: file_id
+                    for kind, file_id in (
+                        ("docx", self._store.view_for_artifact(artifact.artifact_id).docx_file_id),
+                        ("pdf", self._store.view_for_artifact(artifact.artifact_id).pdf_file_id),
+                    )
+                    if file_id is not None
+                }
+                retry_file_pairs: tuple[tuple[Literal["docx", "pdf"], str], ...] = (
+                    ("docx", reserved.docx_file_id),
+                    ("pdf", reserved.pdf_file_id),
                 )
-            verified_file_ids = {
-                kind: file_id
-                for kind, file_id in (
-                    ("docx", self._store.view_for_artifact(artifact.artifact_id).docx_file_id),
-                    ("pdf", self._store.view_for_artifact(artifact.artifact_id).pdf_file_id),
-                )
-                if file_id is not None
-            }
-            retry_file_pairs: tuple[tuple[Literal["docx", "pdf"], str], ...] = (
-                ("docx", reserved.docx_file_id),
-                ("pdf", reserved.pdf_file_id),
-            )
-            for file_kind, file_id in retry_file_pairs:
-                remote = self._drive_client.reconcile_verified_file(
-                    access_token,
-                    file_id,
-                    final_artifact_id=artifact.artifact_id,
-                    file_kind=file_kind,
-                    folder_id=reserved.folder_id,
-                    before_request=before_request,
-                )
-                if file_kind in verified_file_ids:
-                    if remote is None:
-                        return self._pending(
-                            operation.id, artifact.artifact_id, "remote_verification_failed"
-                        )
-                    continue
-                if remote is None:
-                    remote = self._drive_client.upload_verified_file(
-                        access_token=access_token,
-                        file_id=file_id,
-                        folder_id=reserved.folder_id,
+                for file_kind, file_id in retry_file_pairs:
+                    remote = self._drive_client.reconcile_verified_file(
+                        access_token,
+                        file_id,
                         final_artifact_id=artifact.artifact_id,
                         file_kind=file_kind,
+                        folder_id=reserved.folder_id,
                         before_request=before_request,
                     )
+                    if file_kind in verified_file_ids:
+                        if remote is None:
+                            return self._pending(
+                                operation.id, artifact.artifact_id, "remote_verification_failed"
+                            )
+                        continue
+                    if remote is None:
+                        remote = self._drive_client.upload_verified_file(
+                            access_token=access_token,
+                            file_id=file_id,
+                            folder_id=reserved.folder_id,
+                            final_artifact_id=artifact.artifact_id,
+                            file_kind=file_kind,
+                            before_request=before_request,
+                        )
+                    self._artifact_by_id(artifact.artifact_id)
+                    self._store.append_event(
+                        operation.id,
+                        "file_verified",
+                        file_kind=file_kind,
+                        file_id=remote.id,
+                        remote_name=remote.name,
+                        remote_mime_type=remote.mime_type,
+                        remote_sha256=remote.sha256,
+                        remote_byte_length=remote.size,
+                    )
                 self._artifact_by_id(artifact.artifact_id)
-                self._store.append_event(
-                    operation.id,
-                    "file_verified",
-                    file_kind=file_kind,
-                    file_id=remote.id,
-                    remote_name=remote.name,
-                    remote_mime_type=remote.mime_type,
-                    remote_sha256=remote.sha256,
-                    remote_byte_length=remote.size,
-                )
-            self._artifact_by_id(artifact.artifact_id)
-            self._store.append_event(operation.id, "completed")
-            return self._store.view_for_artifact(artifact.artifact_id)
+                self._store.append_event(operation.id, "completed")
+                return self._store.view_for_artifact(artifact.artifact_id)
+            except DriveApiError:
+                return self._pending(operation.id, artifact.artifact_id, "drive_unavailable")
         finally:
             self._leave(operation.id)
 
@@ -297,52 +300,55 @@ class FinalResumeDriveBackupService:
         def before_request() -> None:
             self._artifact_by_id(final_artifact_id)
 
-        reserved = self._store.reserved_ids(operation_id)
-        if reserved is None:
-            folder_id, docx_file_id, pdf_file_id = self._drive_client.generate_ids(
-                access_token, 3, before_request=before_request
+        try:
+            reserved = self._store.reserved_ids(operation_id)
+            if reserved is None:
+                folder_id, docx_file_id, pdf_file_id = self._drive_client.generate_ids(
+                    access_token, 3, before_request=before_request
+                )
+                self._artifact_by_id(final_artifact_id)
+                self._store.append_event(
+                    operation_id,
+                    "ids_reserved",
+                    folder_id=folder_id,
+                    docx_file_id=docx_file_id,
+                    pdf_file_id=pdf_file_id,
+                )
+                reserved = ReservedDriveIds(folder_id, docx_file_id, pdf_file_id)
+            self._drive_client.create_or_verify_folder(
+                access_token, reserved.folder_id, before_request=before_request
             )
             self._artifact_by_id(final_artifact_id)
-            self._store.append_event(
-                operation_id,
-                "ids_reserved",
-                folder_id=folder_id,
-                docx_file_id=docx_file_id,
-                pdf_file_id=pdf_file_id,
+            self._store.append_event(operation_id, "folder_verified", folder_id=reserved.folder_id)
+            file_pairs: tuple[tuple[Literal["docx", "pdf"], str], ...] = (
+                ("docx", reserved.docx_file_id),
+                ("pdf", reserved.pdf_file_id),
             )
-            reserved = ReservedDriveIds(folder_id, docx_file_id, pdf_file_id)
-        self._drive_client.create_or_verify_folder(
-            access_token, reserved.folder_id, before_request=before_request
-        )
-        self._artifact_by_id(final_artifact_id)
-        self._store.append_event(operation_id, "folder_verified", folder_id=reserved.folder_id)
-        file_pairs: tuple[tuple[Literal["docx", "pdf"], str], ...] = (
-            ("docx", reserved.docx_file_id),
-            ("pdf", reserved.pdf_file_id),
-        )
-        for file_kind, file_id in file_pairs:
-            remote = self._drive_client.upload_verified_file(
-                access_token=access_token,
-                file_id=file_id,
-                folder_id=reserved.folder_id,
-                final_artifact_id=final_artifact_id,
-                file_kind=file_kind,
-                before_request=before_request,
-            )
+            for file_kind, file_id in file_pairs:
+                remote = self._drive_client.upload_verified_file(
+                    access_token=access_token,
+                    file_id=file_id,
+                    folder_id=reserved.folder_id,
+                    final_artifact_id=final_artifact_id,
+                    file_kind=file_kind,
+                    before_request=before_request,
+                )
+                self._artifact_by_id(final_artifact_id)
+                self._store.append_event(
+                    operation_id,
+                    "file_verified",
+                    file_kind=file_kind,
+                    file_id=remote.id,
+                    remote_name=remote.name,
+                    remote_mime_type=remote.mime_type,
+                    remote_sha256=remote.sha256,
+                    remote_byte_length=remote.size,
+                )
             self._artifact_by_id(final_artifact_id)
-            self._store.append_event(
-                operation_id,
-                "file_verified",
-                file_kind=file_kind,
-                file_id=remote.id,
-                remote_name=remote.name,
-                remote_mime_type=remote.mime_type,
-                remote_sha256=remote.sha256,
-                remote_byte_length=remote.size,
-            )
-        self._artifact_by_id(final_artifact_id)
-        self._store.append_event(operation_id, "completed")
-        return self._store.view_for_artifact(final_artifact_id)
+            self._store.append_event(operation_id, "completed")
+            return self._store.view_for_artifact(final_artifact_id)
+        except DriveApiError:
+            return self._pending(operation_id, final_artifact_id, "drive_unavailable")
 
     def _artifact_by_id(self, final_artifact_id: str) -> FinalResumeArtifact:
         return self._finalisation_service.artifact_by_id(final_artifact_id)
