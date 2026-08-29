@@ -409,6 +409,50 @@ def test_duplicate_backup_request_does_not_start_a_second_consent_flow(tmp_path)
         runtime.close()
 
 
+def test_restart_rejects_an_old_oauth_callback_without_drive_work(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        store = DriveBackupStore(runtime.coordinator)
+        first_service = FinalResumeDriveBackupService(
+            finalisation_service=runtime.service,
+            authorization_service=_AuthorizationAfterConsent(),
+            drive_client=_DriveThatRecordsVerifiedWork(),
+            store=store,
+        )
+        first_service.request_backup(
+            final_artifact_id=artifact.artifact_id,
+            session_id="session-1",
+            redirect_uri="http://127.0.0.1:8765/phase-2/drive-backups/oauth/callback",
+        )
+        restarted_drive = _DriveThatRecordsVerifiedWork()
+        restarted_service = FinalResumeDriveBackupService(
+            finalisation_service=runtime.service,
+            authorization_service=_AuthorizationAfterConsent(),
+            drive_client=restarted_drive,
+            store=store,
+        )
+
+        assert (
+            restarted_service.view_for_artifact(artifact.artifact_id).status
+            == "sign_in_required"
+        )
+        with pytest.raises(ValueError, match="unavailable"):
+            restarted_service.complete_authorization(
+                state="state-1", code="synthetic-code", session_id="session-1"
+            )
+        assert restarted_drive.calls == []
+    finally:
+        runtime.close()
+
+
 def test_denied_authorization_consumes_state_without_drive_work(tmp_path) -> None:
     runtime = build_synthetic_phase3_runtime(tmp_path)
     try:
