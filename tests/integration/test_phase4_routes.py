@@ -8,6 +8,9 @@ from tests.support.web import authenticated_test_app, build_test_app
 class SyntheticConfiguredDriveService:
     status = "not_requested"
 
+    def __init__(self) -> None:
+        self.callback_calls: list[tuple[str, str]] = []
+
     def view_for_artifact(self, artifact_id: str) -> DriveBackupView:
         return DriveBackupView(
             operation_id="operation-1" if self.status == "pending" else None,
@@ -23,6 +26,19 @@ class SyntheticConfiguredDriveService:
             pdf_sha256=None,
             completed_at=None,
         )
+
+    def complete_authorization(self, *, state: str, code: str, session_id: str) -> DriveBackupView:
+        assert session_id
+        self.callback_calls.append((state, code))
+        return self.view_for_artifact("final-artifact-1")
+
+    def deny_authorization(
+        self, *, state: str, reason_code: str, session_id: str
+    ) -> DriveBackupView:
+        assert reason_code == "access_denied"
+        assert session_id
+        self.callback_calls.append((state, reason_code))
+        return self.view_for_artifact("final-artifact-1")
 
 
 def _configured_final_artifact(tmp_path, *, status="not_requested"):
@@ -51,6 +67,35 @@ def test_oauth_callback_is_the_only_cookie_exception_and_rejects_unknown_state(
     assert callback.status_code == 400
     assert "Launch session required" not in callback.text
     assert protected.status_code == 401
+
+
+def test_oauth_callback_handles_only_one_explicit_cancellation(vault_settings, tmp_path) -> None:
+    with build_test_app(
+        vault_settings, configure_prepared=_configured_final_artifact(tmp_path)
+    ) as (_launch, client):
+        response = client.get(
+            "/phase-2/drive-backups/oauth/callback?state=state-1&error=access_denied"
+        )
+
+    assert response.status_code == 200
+    assert response.text == "Google authorization was cancelled safely."
+
+
+def test_oauth_callback_rejects_duplicate_or_mixed_result_parameters(
+    vault_settings, tmp_path
+) -> None:
+    with build_test_app(
+        vault_settings, configure_prepared=_configured_final_artifact(tmp_path)
+    ) as (_launch, client):
+        duplicate = client.get(
+            "/phase-2/drive-backups/oauth/callback?state=state-1&state=state-2&code=code-1"
+        )
+        mixed = client.get(
+            "/phase-2/drive-backups/oauth/callback?state=state-1&code=code-1&error=access_denied"
+        )
+
+    assert duplicate.status_code == 400
+    assert mixed.status_code == 400
 
 
 def test_backup_request_requires_an_enabled_service_and_opaque_artifact_id(vault_settings) -> None:

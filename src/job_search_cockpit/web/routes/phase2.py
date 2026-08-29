@@ -35,16 +35,40 @@ def _runtime(request: Request) -> Phase2Runtime | None:
 def drive_oauth_callback(request: Request) -> Response:
     """The sole route that may receive Google's cross-site loopback redirect."""
     runtime = _runtime(request)
-    state = _bounded(request.query_params.get("state"), 120)
-    code = _bounded(request.query_params.get("code"), 4096)
-    if runtime is None or runtime.drive_backup_service is None or not state or not code:
+    parameters = request.query_params
+    state_values = parameters.getlist("state")
+    code_values = parameters.getlist("code")
+    error_values = parameters.getlist("error")
+    if (
+        runtime is None
+        or runtime.drive_backup_service is None
+        or set(parameters) - {"state", "code", "error"}
+        or len(state_values) != 1
+        or len(code_values) + len(error_values) != 1
+    ):
+        return PlainTextResponse("Google authorization is unavailable.", status_code=400)
+    state = _bounded(state_values[0], 120)
+    if not state:
         return PlainTextResponse("Google authorization is unavailable.", status_code=400)
     try:
-        runtime.drive_backup_service.complete_authorization(
-            state=state,
-            code=code,
-            session_id=request.app.state.launch_session.session_id,
-        )
+        if code_values:
+            code = _bounded(code_values[0], 4096)
+            if not code:
+                return PlainTextResponse("Google authorization is unavailable.", status_code=400)
+            runtime.drive_backup_service.complete_authorization(
+                state=state,
+                code=code,
+                session_id=request.app.state.launch_session.session_id,
+            )
+        elif error_values == ["access_denied"]:
+            runtime.drive_backup_service.deny_authorization(
+                state=state,
+                reason_code="access_denied",
+                session_id=request.app.state.launch_session.session_id,
+            )
+            return PlainTextResponse("Google authorization was cancelled safely.")
+        else:
+            return PlainTextResponse("Google authorization is unavailable.", status_code=400)
     except ValueError:
         return PlainTextResponse("Google authorization is unavailable.", status_code=400)
     return PlainTextResponse("Google authorization completed safely.")
