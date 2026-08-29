@@ -22,6 +22,7 @@ from job_search_cockpit.phase2.drive_auth import (
 from job_search_cockpit.phase2.drive_backup import DriveBackupStore, FinalResumeDriveBackupService
 from job_search_cockpit.phase2.finalisation import LocalResumeFinalisationService
 from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2MutationCoordinator
+from job_search_cockpit.phase2.providers import create_provider_http_client
 from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationAttemptStore,
     ResumePreparationService,
@@ -48,8 +49,11 @@ class Phase2Runtime:
     application_draft_service: ApplicationDraftService
     drive_backup_service: FinalResumeDriveBackupService | None
     drive_http_client: httpx.Client | None
+    provider_http_clients: list[httpx.Client]
 
     def close(self) -> None:
+        for client in self.provider_http_clients:
+            client.close()
         if self.drive_http_client is not None:
             self.drive_http_client.close()
         self.coordinator.dispose()
@@ -63,6 +67,13 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
     instance_lock = Phase2InstanceLock.acquire(phase2_settings)
     coordinator = Phase2MutationCoordinator(phase2_settings, engine, instance_lock)
     activation_service = Phase2ActivationService(phase1_port, coordinator)
+    provider_http_clients: list[httpx.Client] = []
+
+    def provider_client_factory() -> httpx.Client:
+        client = create_provider_http_client()
+        provider_http_clients.append(client)
+        return client
+
     preparation_port = CatalogVerifiedJobPreparationPort(
         phase1_port, activation_service, coordinator
     )
@@ -104,6 +115,10 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
             phase1_port,
             activation_service,
             coordinator,
+            credential_settings=(
+                phase2_settings if (phase2_settings.data_dir / ".env").exists() else None
+            ),
+            client_factory=provider_client_factory,
         ),
         verified_job_authorization_service=verification_service,
         resume_preparation_service=ResumePreparationService(
@@ -118,4 +133,5 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         ),
         drive_backup_service=drive_backup_service,
         drive_http_client=drive_http_client,
+        provider_http_clients=provider_http_clients,
     )

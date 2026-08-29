@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
+from typing import Literal, Protocol
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,7 +18,11 @@ from job_search_cockpit.phase1_contract.snapshots import (
 )
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.config import Phase2Settings
-from job_search_cockpit.phase2.listing_types import ProviderListing
+from job_search_cockpit.phase2.discovery_types import (
+    ProviderListing,
+    ProviderOutcome,
+    ProviderRequest,
+)
 from job_search_cockpit.phase2.models import (
     Phase2DiscoveryRun,
     Phase2JobRecord,
@@ -24,18 +32,39 @@ from job_search_cockpit.phase2.models import (
     Phase2SourceListingObservation,
 )
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
-from job_search_cockpit.phase2.official_providers import OfficialProviderAdapterRegistry
+from job_search_cockpit.phase2.provider_config import (
+    ProviderConfigurationError,
+    ProviderCredentials,
+    ProviderLimits,
+    read_provider_env_file,
+)
 from job_search_cockpit.phase2.provider_instances import (
     ApprovedProviderInstance,
     OfficialProviderKind,
-    ProviderInstanceUnavailable,
 )
-from job_search_cockpit.phase2.types import Phase2Action, Phase2ActivationUnavailable
+from job_search_cockpit.phase2.providers import (
+    APIFY_GLASSDOOR_ACTOR,
+    APIFY_LINKEDIN_ACTOR,
+    APIFY_NAUKRI_ACTOR,
+    ApifyProvider,
+    JSearchProvider,
+    ProviderResponseError,
+    create_provider_http_client,
+)
+from job_search_cockpit.phase2.types import (
+    Phase2Action,
+    Phase2ActivationUnavailable,
+    Phase2ActivationView,
+)
 from job_search_cockpit.ports import Phase1MatchingPort
 
 
 class DiscoveryUnavailable(ValueError):
     """Raised when no approved official provider can be used."""
+
+
+_MAX_ROLE_QUERY_LENGTH = 512
+ProviderConfigurationStatus = Literal["available", "missing", "partial"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +73,7 @@ class DiscoveryResult:
     provider_counts: dict[str, int]
     observation_count: int
     revision_count: int
+    provider_failures: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,12 +83,24 @@ class DiscoveryStatusView:
     last_run_counts: dict[str, int]
     candidate_count: int
     verification_count: int
+    provider_failures: dict[str, str] = field(default_factory=dict)
+    provider_configuration_status: ProviderConfigurationStatus = "missing"
+
+
+class ListingProvider(Protocol):
+    def fetch(
+        self,
+        request: ProviderRequest,
+        credentials: ProviderCredentials,
+        client: httpx.Client,
+    ) -> tuple[ProviderListing, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
-class _OfficialProviderPlan:
+class _ProviderPlan:
     provider_id: str
-    instance: ApprovedProviderInstance
+    request: ProviderRequest
+    provider: ListingProvider
 
 
 class DiscoveryService:
@@ -68,30 +110,50 @@ class DiscoveryService:
         phase1_port: Phase1MatchingPort | None = None,
         activation_service: Phase2ActivationService | None = None,
         coordinator: Phase2MutationCoordinator | None = None,
-        adapter_registry: OfficialProviderAdapterRegistry | None = None,
+        *,
+        credentials: ProviderCredentials | None = None,
+        credential_settings: Phase2Settings | None = None,
+        providers: Mapping[str, ListingProvider] | None = None,
+        client_factory: Callable[[], httpx.Client] = create_provider_http_client,
     ) -> None:
         self.settings = settings
         self.phase1_port = phase1_port
         self.activation_service = activation_service
         self.coordinator = coordinator
-        self.adapter_registry = (
-            adapter_registry or OfficialProviderAdapterRegistry.with_direct_source_adapters()
-        )
+        self.credentials = credentials
+        self.credential_settings = credential_settings
+        self.providers = dict(providers) if providers is not None else _default_providers()
+        self._client_factory = client_factory
+        self._last_provider_failures: dict[str, str] = {}
 
     @classmethod
     def unavailable_for_tests(cls, settings: Phase2Settings) -> DiscoveryService:
         return cls(settings)
 
     def run_micro_pilot(self) -> DiscoveryResult:
-        return self._run()
+        return self._run(micro=True)
 
     def run_weekly_pilot(self) -> DiscoveryResult:
-        return self._run()
+        return self._run(micro=False)
+
+    def plans_for_test(self, *, micro: bool) -> tuple[_ProviderPlan, ...]:
+        if self.phase1_port is None:
+            raise Phase2ActivationUnavailable("Phase II provider access is unavailable.")
+        return self._plans(self.phase1_port.activation_inputs(), micro=micro)
 
     def status_view(self) -> DiscoveryStatusView:
-        configured = self._provider_configuration_available()
+        configuration_status = self._provider_configuration_status()
+        configured = configuration_status == "available"
         if self.coordinator is None:
-            return DiscoveryStatusView(configured, None, {}, 0, 0)
+            return DiscoveryStatusView(
+                configured,
+                None,
+                {},
+                0,
+                0,
+                {},
+                configuration_status,
+            )
         with self.coordinator._session_factory() as session:
             run = session.scalar(
                 select(Phase2DiscoveryRun).order_by(
@@ -121,9 +183,11 @@ class DiscoveryService:
                 verification_count=int(
                     session.scalar(select(func.count(Phase2JobVerification.id))) or 0
                 ),
+                provider_failures=dict(self._last_provider_failures),
+                provider_configuration_status=configuration_status,
             )
 
-    def _run(self) -> DiscoveryResult:
+    def _run(self, *, micro: bool) -> DiscoveryResult:
         self._require_available()
         assert self.activation_service is not None
         assert self.phase1_port is not None
@@ -131,33 +195,158 @@ class DiscoveryService:
         activation_service = self.activation_service
         phase1_port = self.phase1_port
 
-        activation_service.revalidate_before(Phase2Action.DISCOVERY)
+        expected_phase2 = activation_service.revalidate_before(Phase2Action.DISCOVERY)
         expected_phase1 = phase1_port.activation_inputs()
-        self._plans(expected_phase1)
-        raise DiscoveryUnavailable(
-            "Official provider execution is unavailable until a named instance and parser are "
-            "approved."
-        )
+        plans = self._plans(expected_phase1, micro=micro)
+        credentials = self._credentials_for_run()
+        outcomes: list[ProviderOutcome] = []
+        client = self._client_factory()
+        for plan in plans:
+            current_phase2 = activation_service.revalidate_before(Phase2Action.DISCOVERY)
+            _require_same_phase2_generation(current_phase2, expected_phase2)
+            phase1_port.revalidate_activation_inputs(expected_phase1)
+            if not _provider_credential_available(plan.provider_id, credentials):
+                outcomes.append(
+                    ProviderOutcome(plan.provider_id, failure_code="authentication_failed")
+                )
+                continue
+            try:
+                listings = plan.provider.fetch(plan.request, credentials, client)
+            except ProviderResponseError as error:
+                outcomes.append(ProviderOutcome(plan.provider_id, failure_code=error.code))
+            else:
+                outcomes.append(ProviderOutcome(plan.provider_id, listings=listings))
+
+        def persist(session: Session) -> DiscoveryResult:
+            current_phase2 = activation_service.revalidate_before(Phase2Action.DISCOVERY)
+            _require_same_phase2_generation(current_phase2, expected_phase2)
+            phase1_port.revalidate_activation_inputs(expected_phase1)
+            run = Phase2DiscoveryRun(
+                id=str(uuid4()),
+                **_phase1_run_fields(expected_phase1),
+                phase2_activation_generation=current_phase2.activation_generation,
+                phase2_restore_generation=current_phase2.restore_generation,
+            )
+            session.add(run)
+            session.flush()
+            provider_counts: dict[str, int] = {}
+            provider_failures: dict[str, str] = {}
+            observation_count = 0
+            revision_count = 0
+            for outcome in outcomes:
+                if outcome.failure_code is not None:
+                    provider_failures.setdefault(outcome.provider_id, outcome.failure_code)
+                    continue
+                for listing in outcome.listings:
+                    created, revision = _persist_listing(
+                        session, run.id, outcome.provider_id, listing
+                    )
+                    observation_count += created
+                    revision_count += revision
+                    if created:
+                        provider_counts[outcome.provider_id] = (
+                            provider_counts.get(outcome.provider_id, 0) + created
+                        )
+            return DiscoveryResult(
+                discovery_run_id=run.id,
+                provider_counts=provider_counts,
+                observation_count=observation_count,
+                revision_count=revision_count,
+                provider_failures=provider_failures,
+            )
+
+        result = self.coordinator.run(persist, "phase2_provider_discovery")
+        self._last_provider_failures = dict(result.provider_failures)
+        return result
 
     def _require_available(self) -> None:
         if self.activation_service is None or self.phase1_port is None or self.coordinator is None:
             raise Phase2ActivationUnavailable("Phase II provider access is unavailable.")
 
-    def _provider_configuration_available(self) -> bool:
-        try:
-            return bool(self._approved_instances())
-        except (DiscoveryUnavailable, ProviderInstanceUnavailable):
-            return False
+    def _provider_configuration_status(self) -> ProviderConfigurationStatus:
+        apify_token, jsearch_key = self._credential_values()
+        available_count = int(bool(apify_token)) + int(bool(jsearch_key))
+        if available_count == 2:
+            return "available"
+        if available_count == 1:
+            return "partial"
+        return "missing"
 
-    def _plans(self, inputs: Phase1ActivationInputs) -> tuple[_OfficialProviderPlan, ...]:
-        del inputs
-        instances = self._approved_instances()
-        if not instances:
-            raise DiscoveryUnavailable("no approved official provider instances are enabled")
-        plans: list[_OfficialProviderPlan] = []
-        for instance in instances:
-            self.adapter_registry.adapter_for(instance.kind)
-            plans.append(_OfficialProviderPlan(instance.instance_id, instance))
+    def _credential_values(self) -> tuple[str, str]:
+        if self.credentials is not None:
+            return self.credentials.apify_token, self.credentials.jsearch_key
+        dotenv: dict[str, str] = {}
+        try:
+            if self.credential_settings is not None:
+                dotenv = read_provider_env_file(self.credential_settings)
+        except ProviderConfigurationError:
+            return "", ""
+        return (
+            os.environ.get("APIFY_API_TOKEN") or dotenv.get("APIFY_API_TOKEN", ""),
+            os.environ.get("JSEARCH_API_KEY") or dotenv.get("JSEARCH_API_KEY", ""),
+        )
+
+    def _credentials_for_run(self) -> ProviderCredentials:
+        if self.credentials is not None:
+            return self.credentials
+        if self._provider_configuration_status() == "available":
+            return ProviderCredentials.from_environment(
+                phase2_settings=self.credential_settings
+            )
+        apify_token, jsearch_key = self._credential_values()
+        return ProviderCredentials(apify_token, jsearch_key)
+
+    def _plans(
+        self, inputs: Phase1ActivationInputs, *, micro: bool
+    ) -> tuple[_ProviderPlan, ...]:
+        limits = ProviderLimits()
+        apify_limit = (
+            limits.micro_listing_limit if micro else limits.linkedin_listing_limit
+        )
+        charge_limit = (
+            limits.micro_apify_charge_usd if micro else limits.max_apify_charge_usd
+        )
+        providers: tuple[tuple[str, ListingProvider], ...] = (
+            ("apify-linkedin", self.providers["apify-linkedin"]),
+            ("apify-naukri", self.providers["apify-naukri"]),
+            ("apify-glassdoor", self.providers["apify-glassdoor"]),
+            ("jsearch", self.providers["jsearch"]),
+        )
+        roles = tuple(
+            dict.fromkeys(role.strip() for role in inputs.profile.payload.eligible_roles)
+        )
+        locations = tuple(
+            dict.fromkeys(location.strip() for location in inputs.profile.payload.locations)
+        )
+        role_query = " OR ".join(roles)
+        if not role_query or not locations:
+            raise DiscoveryUnavailable(
+                "the active search profile has no queryable roles or locations"
+            )
+        if len(role_query) > _MAX_ROLE_QUERY_LENGTH:
+            raise DiscoveryUnavailable(
+                "the active search profile role query exceeds 512 characters"
+            )
+        plans: list[_ProviderPlan] = []
+        for index, (provider_id, provider) in enumerate(providers):
+            listing_limit = (
+                min(apify_limit, ProviderLimits.listing_limit_for(provider_id))
+                if provider_id.startswith("apify")
+                else limits.jsearch_listing_limit
+            )
+            plans.append(
+                _ProviderPlan(
+                    provider_id,
+                    ProviderRequest(
+                        provider_id,
+                        role_query,
+                        locations[index % len(locations)],
+                        listing_limit,
+                        charge_limit if provider_id.startswith("apify") else None,
+                    ),
+                    provider,
+                )
+            )
         return tuple(plans)
 
     def _approved_instances(self) -> tuple[ApprovedProviderInstance, ...]:
@@ -210,6 +399,33 @@ def _string_tuple(value: list[object]) -> tuple[str, ...]:
     if len(strings) != len(value):
         raise ValueError("approved official provider metadata is invalid")
     return strings
+
+
+def _default_providers() -> dict[str, ListingProvider]:
+    return {
+        "apify-linkedin": ApifyProvider(APIFY_LINKEDIN_ACTOR),
+        "apify-naukri": ApifyProvider(APIFY_NAUKRI_ACTOR),
+        "apify-glassdoor": ApifyProvider(APIFY_GLASSDOOR_ACTOR),
+        "jsearch": JSearchProvider(),
+    }
+
+
+def _require_same_phase2_generation(
+    current: Phase2ActivationView, expected: Phase2ActivationView
+) -> None:
+    if (
+        current.activation_generation != expected.activation_generation
+        or current.restore_generation != expected.restore_generation
+    ):
+        raise Phase2ActivationUnavailable("Phase II activation changed during discovery.")
+
+
+def _provider_credential_available(
+    provider_id: str, credentials: ProviderCredentials
+) -> bool:
+    if provider_id.startswith("apify"):
+        return bool(credentials.apify_token)
+    return bool(credentials.jsearch_key)
 
 
 def _phase1_run_fields(inputs: Phase1ActivationInputs) -> dict[str, object]:
