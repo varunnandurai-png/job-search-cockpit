@@ -7,7 +7,11 @@ from job_search_cockpit.phase2.drive_backup import (
     ReservedDriveIds,
     derive_drive_backup_status,
 )
-from job_search_cockpit.phase2.finalisation import FINALISE_CONFIRMATION, FinaliseResumeCommand
+from job_search_cockpit.phase2.finalisation import (
+    FINALISE_CONFIRMATION,
+    FinalisationError,
+    FinaliseResumeCommand,
+)
 from tests.support.phase3 import build_synthetic_phase3_runtime
 
 
@@ -449,6 +453,46 @@ def test_restart_rejects_an_old_oauth_callback_without_drive_work(tmp_path) -> N
                 state="state-1", code="synthetic-code", session_id="session-1"
             )
         assert restarted_drive.calls == []
+    finally:
+        runtime.close()
+
+
+def test_manual_retry_stops_before_drive_work_when_local_files_drift(tmp_path) -> None:
+    runtime = build_synthetic_phase3_runtime(tmp_path)
+    try:
+        review = runtime.service.start_review("job-1")
+        artifact = runtime.service.finalise(
+            FinaliseResumeCommand(
+                review.attempt_id,
+                FINALISE_CONFIRMATION,
+                runtime.headshot_path,
+            )
+        )
+        store = DriveBackupStore(runtime.coordinator)
+        operation = store.create_operation(artifact)
+        store.append_event(operation.id, "requested")
+        store.append_event(
+            operation.id,
+            "ids_reserved",
+            folder_id="folder-1",
+            docx_file_id="docx-1",
+            pdf_file_id="pdf-1",
+        )
+        store.append_event(operation.id, "folder_verified", folder_id="folder-1")
+        store.append_event(operation.id, "pending", reason_code="drive_unavailable")
+        artifact.pdf_path.write_bytes(b"changed after finalisation")
+        drive = _DriveForManualRetry()
+        service = FinalResumeDriveBackupService(
+            finalisation_service=runtime.service,
+            authorization_service=_AuthorizationWithAccess(),
+            drive_client=drive,
+            store=store,
+        )
+
+        with pytest.raises(FinalisationError, match="failed verification"):
+            service.retry_backup(operation.id)
+
+        assert drive.calls == []
     finally:
         runtime.close()
 
