@@ -179,25 +179,68 @@ class DriveApiClient:
         ):
             raise DriveApiError("The verified final résumé file is unavailable.")
         before_request()
-        initiated = self._http_client.post(
-            _UPLOAD_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "X-Upload-Content-Type": mime_type,
-                "X-Upload-Content-Length": str(size),
-            },
-            json={"id": file_id, "name": path.name, "mimeType": mime_type, "parents": [folder_id]},
-        )
+        try:
+            initiated = self._http_client.post(
+                _UPLOAD_URL,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "X-Upload-Content-Type": mime_type,
+                    "X-Upload-Content-Length": str(size),
+                },
+                json={
+                    "id": file_id,
+                    "name": path.name,
+                    "mimeType": mime_type,
+                    "parents": [folder_id],
+                },
+            )
+        except httpx.HTTPError:
+            return self._reconcile_uncertain_upload(
+                access_token=access_token,
+                file_id=file_id,
+                folder_id=folder_id,
+                final_artifact_id=final_artifact_id,
+                file_kind=file_kind,
+                before_request=before_request,
+            )
+        if initiated.status_code >= 500:
+            return self._reconcile_uncertain_upload(
+                access_token=access_token,
+                file_id=file_id,
+                folder_id=folder_id,
+                final_artifact_id=final_artifact_id,
+                file_kind=file_kind,
+                before_request=before_request,
+            )
         session_url = initiated.headers.get("Location") if initiated.status_code == 200 else ""
         parsed = urlsplit(session_url)
         if parsed.scheme != "https" or parsed.hostname != _DRIVE_API_HOST:
             raise DriveApiError("Google Drive did not provide a valid upload session.")
         before_request()
-        uploaded = self._http_client.put(
-            session_url,
-            headers={"Content-Type": mime_type, "Content-Length": str(size)},
-            content=path.read_bytes(),
-        )
+        try:
+            uploaded = self._http_client.put(
+                session_url,
+                headers={"Content-Type": mime_type, "Content-Length": str(size)},
+                content=path.read_bytes(),
+            )
+        except httpx.HTTPError:
+            return self._reconcile_uncertain_upload(
+                access_token=access_token,
+                file_id=file_id,
+                folder_id=folder_id,
+                final_artifact_id=final_artifact_id,
+                file_kind=file_kind,
+                before_request=before_request,
+            )
+        if uploaded.status_code >= 500:
+            return self._reconcile_uncertain_upload(
+                access_token=access_token,
+                file_id=file_id,
+                folder_id=folder_id,
+                final_artifact_id=final_artifact_id,
+                file_kind=file_kind,
+                before_request=before_request,
+            )
         metadata = self._metadata(uploaded, "Google Drive did not verify the final résumé file.")
         if (
             metadata.id != file_id
@@ -211,6 +254,28 @@ class DriveApiClient:
             or not metadata.app_authorized
         ):
             raise DriveApiError("Google Drive did not verify the final résumé file.")
+        return metadata
+
+    def _reconcile_uncertain_upload(
+        self,
+        *,
+        access_token: str,
+        file_id: str,
+        folder_id: str,
+        final_artifact_id: str,
+        file_kind: Literal["docx", "pdf"],
+        before_request: Callable[[], None],
+    ) -> DriveFileMetadata:
+        metadata = self.reconcile_verified_file(
+            access_token,
+            file_id,
+            final_artifact_id=final_artifact_id,
+            file_kind=file_kind,
+            folder_id=folder_id,
+            before_request=before_request,
+        )
+        if metadata is None:
+            raise DriveApiError("Google Drive could not verify the final résumé file.")
         return metadata
 
     def _get_metadata(
