@@ -3,7 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from secrets import token_urlsafe
-from subprocess import run
+from subprocess import TimeoutExpired, run
 from threading import RLock
 from time import monotonic
 from typing import Protocol
@@ -285,18 +285,22 @@ class MacOSKeychainCredentialStore:
                 text=True,
                 check=False,
             )
-        except OSError as error:
+        except (OSError, TimeoutExpired) as error:
             raise DriveAuthorizationError("The macOS Keychain is unavailable.") from error
         if result.returncode != 0:
             return None
         token = result.stdout.rstrip("\n")
-        return token if token else None
+        if not token:
+            return None
+        if len(token) > 4096:
+            raise DriveAuthorizationError("The macOS Keychain is unavailable.")
+        return token
 
     @staticmethod
     def _run(args: tuple[str, ...], value: str) -> None:
         try:
             result = run(args, input=value, timeout=5, capture_output=True, text=True, check=False)
-        except OSError as error:
+        except (OSError, TimeoutExpired) as error:
             raise DriveAuthorizationError("The macOS Keychain is unavailable.") from error
         if result.returncode != 0:
             raise DriveAuthorizationError("The macOS Keychain is unavailable.")

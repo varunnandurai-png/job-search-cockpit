@@ -3,6 +3,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
+import job_search_cockpit.phase2.drive_auth as drive_auth
 from job_search_cockpit.phase2.drive_auth import (
     DriveAuthorizationError,
     DriveAuthorizationService,
@@ -194,3 +195,14 @@ def test_refresh_rejects_a_returned_scope_other_than_drive_file() -> None:
 
     with pytest.raises(DriveAuthorizationError, match="invalid"):
         service.access_token(lambda: None)
+
+
+def test_keychain_load_rejects_an_oversized_refresh_permission(monkeypatch) -> None:
+    class Result:
+        returncode = 0
+        stdout = "x" * 4097
+
+    monkeypatch.setattr(drive_auth, "run", lambda *_args, **_kwargs: Result())
+
+    with pytest.raises(DriveAuthorizationError, match="Keychain"):
+        MacOSKeychainCredentialStore.load_refresh_token()
