@@ -224,76 +224,108 @@ git add src/job_search_cockpit/phase2/discovery.py src/job_search_cockpit/phase2
 git commit -m "feat: restore profile-driven provider discovery"
 ```
 
-### Task 3: Build the current candidate and requirement-ledger workflow
+### Task 3A: Add the Phase I local-manual fact-choice boundary
+
+This task follows
+`docs/superpowers/specs/2026-08-30-phase-2-local-manual-mapping-amendment.md`.
+The earlier proposal to store `job.*` IDs in the Phase III ledger is retired.
+
+**Files:**
+- Modify: `src/job_search_cockpit/phase1_contract/snapshots.py`
+- Create: `src/job_search_cockpit/phase1_contract/retrieval.py`
+- Modify: `src/job_search_cockpit/phase1_contract/service.py`
+- Modify: `src/job_search_cockpit/phase1_contract/matching_port.py`
+- Modify: `src/job_search_cockpit/ports.py`
+- Modify: `src/job_search_cockpit/storage/models.py`
+- Create: `alembic/versions/<revision>_local_manual_disclosure_budget.py`
+- Create: `tests/unit/test_phase1_matching_retrieval.py`
+- Modify: `tests/integration/test_phase1_contract.py`
+
+**Produces:** the approved job-level bounded semantic matching bundle, one
+durable disclosure authorization, and a complete non-pageable relevant fact set
+with at most 32 unique choices.
+
+- [ ] Write RED contract tests for bounded taxonomy queries, stable ordering,
+  confidential/stale/unsupported/unrelated exclusion, cap/incompleteness, and
+  revalidation failure after authority or fact drift.
+- [ ] Extend the frozen query/fact-set types additively with controlled semantic
+  predicates, retrieval-policy metadata, completeness state, and fingerprints.
+- [ ] Implement Phase I-owned relevance selection and eligibility filtering from
+  the frozen taxonomy/retrieval policy and acceptance corpus.
+- [ ] Enforce job/session-wide requirement, taxonomy, unique-fact, and relevance
+  edge budgets. Count all authorization outcomes in a monotonic disclosure
+  epoch across sessions. Record/reuse one exact disclosure authorization in the
+  Phase I audit and recovery ledgers; reject a changed query for the same scope.
+- [ ] Implement the wording-free retrieval manifest: opaque refs, relevance
+  edges, safe-wording hashes, exact Phase I fence, and immutable fingerprint.
+  Release safe wording only after the same logical payload digest is authorized
+  by Phase II and Phase I, and verify every released wording hash.
+- [ ] Add the explicit reason/confirmation-gated command that opens a new
+  disclosure epoch without deleting earlier history.
+- [ ] Expose the operations through `InternalPhase1MatchingPort` and the
+  protocol without changing any existing method shape.
+- [ ] Verify focused tests, Ruff, mypy, and `git diff --check`; commit and review.
+
+### Task 3B: Build current candidates and constrained local-manual assessments
 
 **Files:**
 - Create: `src/job_search_cockpit/phase2/candidates.py`
 - Create: `tests/unit/test_candidate_workflow.py`
+- Modify: `src/job_search_cockpit/phase2/runtime.py`
+- Modify: `src/job_search_cockpit/phase2/assessment.py`
+- Modify: `src/job_search_cockpit/phase2/models.py`
+- Create: `alembic_phase2/versions/<revision>_local_manual_mapping_attempts.py`
 - Modify: `tests/integration/test_phase2_discovery_runtime.py`
+- Create: `tests/integration/test_phase2_manual_mapping.py`
 
-**Interfaces:**
-- Consumes: persisted `Phase2JobRecord`, `Phase2JobRevision`, and source observations; active Phase I profile; existing `VerifiedJobAuthorizationService`.
-- Produces: `CandidateWorkflowService.current_candidates() -> tuple[CandidateReview, ...]` and `CandidateWorkflowService.issue_requirement_ledger(job_revision_id: str) -> RequirementLedgerView`.
+**Produces:** current candidate reviews, bounded public requirement extraction,
+server-validated manual mappings, and append-only assessment publication.
 
-- [ ] **Step 1: Write failing candidate gate tests**
+- [ ] Write RED candidate gate and requirement-extraction tests.
+- [ ] Apply locked profile rules without guessing; score, confidence, and gate
+  state remain separate. Missing descriptions and uncertain mandatory clauses
+  remain blocking.
+- [ ] Derive stable public job-requirement IDs only for Phase II assessment.
+- [ ] Accept only a Phase I choice or `none`, plus closed relation/reason pairs;
+  reload the revision and choices and reject altered IDs or spans.
+- [ ] Revalidate the selected Phase I projection, calculate the existing fixed
+  score/band/confidence, and publish through `AssessmentPublicationService`.
+- [ ] Bind publication to the exact expected matching/projection snapshot;
+  validate mapping membership and revalidate immediately before and inside the
+  mutation while persisting the expected authority fence.
+- [ ] Persist Phase II mapping attempts/events and the recovery-ledger
+  authorization with attempt ID/nonce, exact payload digest, selected location,
+  coverage, rubric/config/schema versions, both stores' generations, expiry,
+  and one-use terminal lifecycle. Phase I and Phase II records must bind the
+  same digest; consuming/terminal attempts deny replay.
+- [ ] Treat retries as new attempt IDs/nonces/digests bound to the same immutable
+  retrieval manifest. Only an unconsumed exact reload may re-release wording.
+- [ ] Verify focused tests, Ruff, mypy, and `git diff --check`; commit and review.
 
-```python
-def test_current_candidates_reject_excluded_employer_and_wrong_location(service) -> None:
-    reviews = service.review((JPMORGAN_LISTING, WRONG_LOCATION_LISTING))
-    assert [item.eligibility for item in reviews] == ["ineligible", "ineligible"]
-    assert reviews[0].reason_codes == ("excluded_employer",)
-    assert reviews[1].reason_codes == ("location_out_of_scope",)
+### Task 3C: Issue an assessment-bound canonical Phase III ledger
 
+**Files:**
+- Modify: `src/job_search_cockpit/phase2/candidates.py`
+- Modify: `src/job_search_cockpit/phase2/verification.py`
+- Modify: `tests/unit/test_candidate_workflow.py`
+- Modify: `tests/unit/test_phase2_verification.py`
+- Modify: `tests/integration/test_phase2_manual_mapping.py`
 
-def test_current_candidate_extracts_bounded_requirement_ids(service) -> None:
-    ledger = service.issue_requirement_ledger("revision-1")
-    assert 1 <= len(ledger.requirement_ids) <= 32
-    assert all(re.fullmatch(r"[a-z][a-z0-9_.-]{0,254}", item) for item in ledger.requirement_ids)
-    assert len(ledger.fingerprint) == 64
-```
+**Produces:** idempotent `Phase2ResumeRequirementLedger` records containing only
+revalidated Phase I canonical fact keys, bound to the current assessment and
+mapping evidence through their fingerprint.
 
-- [ ] **Step 2: Run focused tests and verify RED**
-
-Run: `UV_CACHE_DIR=/private/tmp/job-search-cockpit-uv-cache uv run pytest tests/unit/test_candidate_workflow.py -q`  
-Expected: FAIL because `candidates.py` does not exist.
-
-- [ ] **Step 3: Implement a bounded deterministic candidate read model**
-
-Define `CandidateReview` with job ID, revision ID, title, employer, locations,
-canonical URL, provider IDs, retrieved/posted timestamps, eligibility,
-reason codes, score, confidence, requirement IDs, and unknown mandatory codes.
-Apply the locked profile rules without guessing: excluded employers/roles and
-out-of-scope locations are `ineligible`; missing compensation or Singapore
-sponsorship is `needs_clarification`; otherwise the candidate is `eligible`
-only when title and location positively match. Keep score separate from gates.
-
-- [ ] **Step 4: Implement deterministic requirement extraction and scoring**
-
-Split public description text into bounded clauses; classify explicit required
-clauses before preferred clauses; derive stable IDs such as
-`job.<revision-prefix>.required.<ordinal>`; cap at 32 and fingerprint the ordered
-ledger. Score only explainable public dimensions (role, domain,
-responsibility, outcome, technical scope, seniority) and expose confidence
-`low` when the description is absent or parsing is uncertain. Never invent a
-Phase I evidence mapping.
-
-- [ ] **Step 5: Persist an immutable resume requirement ledger at verification time**
-
-`issue_requirement_ledger()` appends `Phase2ResumeRequirementLedger` bound to
-the exact job/revision and current Phase II activation/restore generation. If an
-identical ledger already exists, reuse it; if the revision changed, issue a new
-ledger. Verification remains blocked when mandatory rule codes are unknown.
-
-- [ ] **Step 6: Verify Task 3 and commit**
-
-Run: `UV_CACHE_DIR=/private/tmp/job-search-cockpit-uv-cache uv run pytest tests/unit/test_candidate_workflow.py tests/unit/test_phase2_eligibility.py tests/unit/test_phase2_scoring.py tests/unit/test_phase2_verification.py tests/integration/test_phase2_discovery_runtime.py -q`  
-Run: `UV_CACHE_DIR=/private/tmp/job-search-cockpit-uv-cache uv run ruff check src/job_search_cockpit/phase2/candidates.py tests/unit/test_candidate_workflow.py tests/integration/test_phase2_discovery_runtime.py`  
-Run: `UV_CACHE_DIR=/private/tmp/job-search-cockpit-uv-cache uv run mypy src`
-
-```bash
-git add src/job_search_cockpit/phase2/candidates.py tests/unit/test_candidate_workflow.py tests/integration/test_phase2_discovery_runtime.py
-git commit -m "feat: add candidate review and requirement ledgers"
-```
+- [ ] Write RED tests proving `job.*` IDs never enter the resume ledger and an
+  unsupported mandatory requirement blocks issuance.
+- [ ] Load only current, authority-fenced assessment mappings; require direct
+  approved evidence for every mandatory requirement.
+- [ ] Dedupe canonical Phase I keys in first-requirement order and bind the
+  fingerprint to job revision, assessment, mappings, evidence refs, canonical
+  keys, and active Phase II generations.
+- [ ] Reuse an identical ledger; issue a new ledger for a changed revision or
+  assessment. Verification reloads this state and ignores posted eligibility.
+- [ ] Verify all Task 3 tests, Phase II scoring/verification suites, Ruff, mypy,
+  and `git diff --check`; commit and review.
 
 ### Task 4: Expose manual discovery and usable candidate actions in the local UI
 
@@ -306,7 +338,10 @@ git commit -m "feat: add candidate review and requirement ledgers"
 
 **Interfaces:**
 - Consumes: Tasks 2–3 services and current CSRF/session security.
-- Produces: `POST /phase-2/discovery-runs`, candidate cards on `GET /phase-2/review`, existing `POST /phase-2/verify`, and existing `POST /phase-2/resume-reviews` as one visible workflow.
+- Produces: `POST /phase-2/discovery-runs`, candidate cards on
+  `GET /phase-2/review`, constrained mapping GET/POST actions, existing
+  `POST /phase-2/verify`, and existing `POST /phase-2/resume-reviews` as one
+  visible workflow.
 
 - [ ] **Step 1: Write failing route and UI tests**
 
@@ -317,8 +352,8 @@ def test_manual_discovery_requires_csrf_and_renders_real_candidate(app) -> None:
     assert response.status_code == 303
     page = app.get("/phase-2/review")
     assert "Senior Product Manager" in page.text
-    assert "Verify selected candidate" in page.text
-    assert "disabled" not in candidate_button_fragment(page.text)
+    assert "Map approved evidence" in page.text
+    assert "Verify selected candidate" not in candidate_button_fragment(page.text)
 
 
 def test_ineligible_candidate_has_no_verification_form(app) -> None:
@@ -342,12 +377,32 @@ provider, query, URL, item-count, or cost inputs.
 - [ ] **Step 4: Render candidate cards and verification forms**
 
 Each current candidate displays employer, title, location, source link, score,
-confidence, gate state, and reason codes. Eligible candidates render the exact
+confidence, gate state, and reason codes. Eligible candidates without a current
+assessment/ledger render **Map approved evidence**. Only after mapping produces
+a current assessment and canonical ledger does the server render the exact
 verification form fields: revision ID, selected approved location, actor
-`Varun`, user-written reason, exact confirmation
-`VERIFY JOB FOR PHASE II PREPARATION`, eligibility `eligible`, and unknown codes.
-After successful verification, render **Prepare tailored resume** posting the
-stable job ID to `/phase-2/resume-reviews`.
+`Varun`, user-written reason, and exact confirmation
+`VERIFY JOB FOR PHASE II PREPARATION`. Eligibility and unknown codes are loaded
+server-side, never trusted from hidden fields. After successful verification,
+render **Prepare tailored resume** posting the stable job ID to
+`/phase-2/resume-reviews`.
+
+- [ ] **Step 4A: Render and submit constrained local-manual mappings**
+
+Add a CSRF-protected POST that obtains the wording-free Phase I retrieval
+manifest, canonicalizes the logical payload, and creates the matching Phase II
+mapping-attempt and Phase I disclosure authorizations. Verify the released
+wording hashes, then redirect to an authenticated no-store mapping view for one
+current revision and one server-loaded public requirement. Render only the
+authorized complete Phase I relevant fact set, **No approved evidence**, and
+closed relation/reason controls. Mapping POST reloads the revision, requirement,
+authorization, and exact choice snapshot and rejects forged, consumed, expired,
+or stale identifiers. Candidate verification remains absent until the resulting
+current assessment and canonical ledger exist.
+
+Add a separate authenticated/CSRF-protected disclosure-budget status and epoch
+renewal action. Renewal requires a reason and exact confirmation and is never
+performed automatically by discovery, mapping, retry, restart, or restore.
 
 - [ ] **Step 5: Issue the requirement ledger before verification**
 
@@ -393,6 +448,7 @@ def test_phase1_to_phase4_working_model(authenticated_cockpit) -> None:
     authenticated_cockpit.post("/phase-2/discovery-runs", data={})
     review = authenticated_cockpit.get("/phase-2/review")
     revision_id, job_id = select_first_eligible_candidate(review)
+    complete_local_manual_mapping(authenticated_cockpit, revision_id)
     authenticated_cockpit.post("/phase-2/verify", data=verification_form(revision_id))
     started = authenticated_cockpit.post("/phase-2/resume-reviews", data={"job_id": job_id})
     assert started.status_code == 303
@@ -505,4 +561,3 @@ Run: `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:<active-port>/he
 git add docs/superpowers/reviews/2026-08-29-phase-1-to-4-working-model-acceptance.md
 git commit -m "docs: record Phase I-IV working model acceptance"
 ```
-

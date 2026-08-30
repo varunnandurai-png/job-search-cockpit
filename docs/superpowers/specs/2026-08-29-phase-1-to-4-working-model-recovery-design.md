@@ -124,6 +124,12 @@ unsupported or unknown mandatory requirements remain visible and block
 finalisation. The existing preview, content fingerprint, and explicit finalise
 confirmation produce one immutable PDF/DOCX pair for the verified revision.
 
+The production mapping and ledger handoff follows the additive local-manual
+contract in
+`2026-08-30-phase-2-local-manual-mapping-amendment.md`. Public job-clause IDs
+remain Phase II identifiers; only revalidated Phase I canonical fact keys enter
+the Phase III resume ledger.
+
 The previously disabled **Verify selected candidate** and **Finalise resume**
 controls become available only when their real upstream state exists. They are
 not enabled cosmetically and do not receive a bypass.
@@ -192,4 +198,3 @@ identity or judgment: reviewing/choosing the candidate, making job-eligibility
 confirmations, approving final resume wording, Google consent, and visually
 confirming the resulting private Drive files. Those steps must have precise
 instructions and accurate UI states; they are not reported as automated.
-
