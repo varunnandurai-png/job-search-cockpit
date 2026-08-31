@@ -182,8 +182,7 @@ class Phase1ContractService:
                 raise Phase1ContractUnavailable("A durable Phase I acceptance receipt is required.")
             if (
                 receipt.application_build != self._build_metadata.application_build
-                or receipt.acceptance_suite_version
-                != self._build_metadata.acceptance_suite_version
+                or receipt.acceptance_suite_version != self._build_metadata.acceptance_suite_version
                 or receipt.schema_revision != self._schema_revision(session)
             ):
                 raise Phase1ContractUnavailable(
@@ -258,9 +257,7 @@ class Phase1ContractService:
         facts: list[Phase1ResumeFactSnapshot] = []
         with factory() as session:
             for requirement_id in request.requirement_ids:
-                claim = session.scalar(
-                    select(Claim).where(Claim.canonical_key == requirement_id)
-                )
+                claim = session.scalar(select(Claim).where(Claim.canonical_key == requirement_id))
                 if claim is None or claim.active_revision_id is None:
                     continue
                 eligibility = is_resume_eligible(
@@ -398,8 +395,7 @@ class Phase1ContractService:
                     Phase1MatchingRetrievalPreflight.job_revision_id == query.job_revision_id,
                     Phase1MatchingRetrievalPreflight.coverage_ledger_fingerprint
                     == query.coverage_ledger_fingerprint,
-                    Phase1MatchingRetrievalPreflight.disclosure_budget_epoch
-                    == epoch.epoch_number,
+                    Phase1MatchingRetrievalPreflight.disclosure_budget_epoch == epoch.epoch_number,
                     Phase1MatchingRetrievalPreflight.phase1_authority_generation
                     == authority.authority_high_water_mark,
                 )
@@ -606,9 +602,7 @@ class Phase1ContractService:
     ) -> str:
         event = session.scalar(
             select(Phase1FactDisclosureLifecycleEvent)
-            .where(
-                Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id
-            )
+            .where(Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id)
             .order_by(Phase1FactDisclosureLifecycleEvent.sequence.desc())
         )
         if event is None:
@@ -700,8 +694,7 @@ class Phase1ContractService:
             nonce_sha256 = sha256(request.context.nonce.encode("utf-8")).hexdigest()
             existing = session.scalar(
                 select(Phase1FactDisclosureAuthorization).where(
-                    Phase1FactDisclosureAuthorization.attempt_id
-                    == request.context.attempt_id
+                    Phase1FactDisclosureAuthorization.attempt_id == request.context.attempt_id
                 )
             )
             if existing is not None:
@@ -725,9 +718,7 @@ class Phase1ContractService:
                 for entry in self._coordinator.recovery_ledger.read_all()
                 if entry.event.event_type == "matching_disclosure_authorization"
             )
-            ledger_attempts = {
-                str(event.payload.get("attempt_id", "")) for event in ledger_events
-            }
+            ledger_attempts = {str(event.payload.get("attempt_id", "")) for event in ledger_events}
             if request.context.attempt_id in ledger_attempts:
                 raise Phase1ContractUnavailable(
                     "The disclosure outcome is indeterminate and cannot be replayed."
@@ -898,9 +889,7 @@ class Phase1ContractService:
         self, request: Phase1DisclosureLifecycleRequest
     ) -> Phase1DisclosureLifecycleSnapshot:
         def record(session: Session) -> tuple[Phase1DisclosureLifecycleSnapshot, bool]:
-            authorization = session.get(
-                Phase1FactDisclosureAuthorization, request.authorization_id
-            )
+            authorization = session.get(Phase1FactDisclosureAuthorization, request.authorization_id)
             if authorization is None:
                 raise Phase1ContractUnavailable("The disclosure authorization is unavailable.")
             if authorization.logical_payload_digest != request.logical_payload_digest:
@@ -914,12 +903,30 @@ class Phase1ContractService:
                 "indeterminate",
                 "cancelled",
             }
+            if current in terminals:
+                event = session.scalar(
+                    select(Phase1FactDisclosureLifecycleEvent)
+                    .where(Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id)
+                    .order_by(Phase1FactDisclosureLifecycleEvent.sequence.desc())
+                )
+                if event is None:
+                    raise Phase1ContractUnavailable("The disclosure lifecycle is unavailable.")
+                fields = {
+                    "event_id": event.id,
+                    "authorization_id": event.authorization_id,
+                    "sequence": event.sequence,
+                    "state": event.state,
+                }
+                return (
+                    Phase1DisclosureLifecycleSnapshot.model_validate(
+                        {**fields, "fingerprint": canonical_fingerprint(fields)}
+                    ),
+                    False,
+                )
             expires_at = authorization.expires_at
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=UTC)
-            expired_before_transition = (
-                current not in terminals and expires_at <= datetime.now(UTC)
-            )
+            expired_before_transition = current == "authorized" and expires_at <= datetime.now(UTC)
             if expired_before_transition:
                 next_state = "expired"
                 reason_code = "authorization_expired_before_lifecycle"
@@ -937,9 +944,7 @@ class Phase1ContractService:
                 reason_code = request.reason_code
             sequence = session.scalar(
                 select(Phase1FactDisclosureLifecycleEvent.sequence)
-                .where(
-                    Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id
-                )
+                .where(Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id)
                 .order_by(Phase1FactDisclosureLifecycleEvent.sequence.desc())
             )
             event = Phase1FactDisclosureLifecycleEvent(
@@ -996,9 +1001,7 @@ class Phase1ContractService:
                 expired_before_transition,
             )
 
-        snapshot, expired_before_transition = self._coordinator.run_metadata(record)
-        if expired_before_transition:
-            raise Phase1ContractUnavailable("The disclosure authorization expired.")
+        snapshot, _expired_before_transition = self._coordinator.run_metadata(record)
         return snapshot
 
     def release_matching_wording(
@@ -1037,10 +1040,7 @@ class Phase1ContractService:
             if expires_at <= datetime.now(UTC):
                 sequence = session.scalar(
                     select(Phase1FactDisclosureLifecycleEvent.sequence)
-                    .where(
-                        Phase1FactDisclosureLifecycleEvent.authorization_id
-                        == authorization.id
-                    )
+                    .where(Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id)
                     .order_by(Phase1FactDisclosureLifecycleEvent.sequence.desc())
                 )
                 event = Phase1FactDisclosureLifecycleEvent(
@@ -1089,9 +1089,7 @@ class Phase1ContractService:
                 raise Phase1ContractUnavailable(
                     "A consuming or terminal disclosure cannot be replayed."
                 )
-            preflight = session.get(
-                Phase1MatchingRetrievalPreflight, authorization.preflight_id
-            )
+            preflight = session.get(Phase1MatchingRetrievalPreflight, authorization.preflight_id)
             if preflight is None:
                 raise Phase1ContractUnavailable("The retrieval preflight is unavailable.")
             manifest = Phase1MatchingRetrievalManifest.model_validate(preflight.manifest_json)
@@ -1156,9 +1154,7 @@ class Phase1ContractService:
             )
             sequence = session.scalar(
                 select(Phase1FactDisclosureReleaseEvent.sequence)
-                .where(
-                    Phase1FactDisclosureReleaseEvent.authorization_id == authorization.id
-                )
+                .where(Phase1FactDisclosureReleaseEvent.authorization_id == authorization.id)
                 .order_by(Phase1FactDisclosureReleaseEvent.sequence.desc())
             )
             release_event = Phase1FactDisclosureReleaseEvent(
@@ -1207,9 +1203,7 @@ class Phase1ContractService:
 
         result, failure = self._coordinator.run_metadata(release)
         if result is None:
-            raise Phase1ContractUnavailable(
-                f"The disclosure authorization {failure}."
-            )
+            raise Phase1ContractUnavailable(f"The disclosure authorization {failure}.")
         return result
 
     def start_new_matching_disclosure_epoch(

@@ -12,7 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from uuid import uuid4
+from typing import Literal, cast
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -54,6 +55,9 @@ from job_search_cockpit.phase2.models import (
     Phase2JobRevision,
     Phase2LocalManualMappingAttempt,
     Phase2LocalManualMappingAttemptEvent,
+    Phase2MatchAssessment,
+    Phase2MatchComponent,
+    Phase2RequirementMapping,
 )
 from job_search_cockpit.phase2.mutation import Phase2MutationCoordinator
 from job_search_cockpit.phase2.recovery_ledger import RecoveryEvent
@@ -71,6 +75,17 @@ _RUBRIC_VERSION = "phase2-fixed-score.v1"
 _RESPONSE_SCHEMA_VERSION = "phase2.local-manual-mapping.v1"
 _RETRIEVAL_CONFIGURATION_VERSION = "phase1.matching-retrieval.v1"
 _INTERPRETER_CONFIGURATION_VERSION = "local_manual.v1"
+_TerminalDisclosureState = Literal[
+    "validated_response",
+    "expired",
+    "denied",
+    "failed",
+    "indeterminate",
+    "cancelled",
+]
+_TERMINAL_DISCLOSURE_STATES = frozenset(
+    {"validated_response", "expired", "denied", "failed", "indeterminate", "cancelled"}
+)
 _RELATION_REASONS = {
     EvidenceRelation.DIRECT: frozenset(
         {
@@ -311,17 +326,13 @@ class CandidateWorkflowService:
     def publish_local_manual_mapping(
         self, launch: LocalManualMappingLaunch, selections: tuple[LocalManualMappingSelection, ...]
     ) -> str:
-        """Atomically consume a locally authorized response before publication."""
+        """Consume once, recovering conservatively across the two independent stores."""
+        recovered = self._reconcile_publication(launch)
+        if recovered is not None:
+            return recovered
         if self._now() >= launch.expires_at:
-            self._terminal(launch.attempt_id, "expired", "authorization_expired")
-            self._phase1_port.record_disclosure_lifecycle(
-                Phase1DisclosureLifecycleRequest(
-                    authorization_id=launch.phase1_authorization_id,
-                    logical_payload_digest=launch.logical_payload_digest,
-                    state="expired",
-                    reason_code="authorization_expired",
-                )
-            )
+            terminal = self._record_phase1_terminal(launch, "expired", "authorization_expired")
+            self._terminal(launch.attempt_id, terminal, "authorization_expired")
             raise CandidateWorkflowUnavailable("The local mapping authorization expired.")
         mappings = tuple(item.mapping() for item in selections)
         requirements = {item.requirement_id: item for item in launch.requirements}
@@ -373,26 +384,16 @@ class CandidateWorkflowService:
             or self._phase1_port.revalidate_matching_retrieval_manifest(manifest) != manifest
         ):
             raise CandidateWorkflowUnavailable("The approved fact set changed before publication.")
-        self._phase1_port.record_disclosure_lifecycle(
-            Phase1DisclosureLifecycleRequest(
-                authorization_id=launch.phase1_authorization_id,
-                logical_payload_digest=launch.logical_payload_digest,
-                state="consuming",
-            )
-        )
+        assessment_id = _assessment_id(launch)
+        self._record_publication_intent(launch, assessment_id)
         try:
-            self._consume(launch.attempt_id, launch.logical_payload_digest)
-        except Exception:
             self._phase1_port.record_disclosure_lifecycle(
                 Phase1DisclosureLifecycleRequest(
                     authorization_id=launch.phase1_authorization_id,
                     logical_payload_digest=launch.logical_payload_digest,
-                    state="indeterminate",
-                    reason_code="phase2_consume_failed",
+                    state="consuming",
                 )
             )
-            raise
-        try:
             scored = tuple(
                 ScoreRequirement(
                     item.requirement_id,
@@ -417,7 +418,7 @@ class CandidateWorkflowService:
             )
             floors = components.role >= 10 and components.responsibility >= 10
             result = MatchAssessmentResult(
-                str(uuid4()),
+                assessment_id,
                 launch.job_revision_id,
                 components,
                 resolve_qualified_match_band(
@@ -457,28 +458,182 @@ class CandidateWorkflowService:
                 command,
                 expected_manifest=launch.manifest,
                 expected_authority=launch.authority,
-                publication_guard=lambda session: _publication_guard(session, launch),
+                publication_guard=lambda session: _publication_guard(
+                    session, launch, assessment_id, self._now()
+                ),
             )
         except Exception:
-            self._terminal(launch.attempt_id, "failed", "publication_failed")
-            self._phase1_port.record_disclosure_lifecycle(
-                Phase1DisclosureLifecycleRequest(
-                    authorization_id=launch.phase1_authorization_id,
-                    logical_payload_digest=launch.logical_payload_digest,
-                    state="failed",
-                    reason_code="publication_failed",
-                )
-            )
+            with self._coordinator._session_factory() as session:
+                published = session.get(Phase2MatchAssessment, assessment_id)
+            if published is not None:
+                recovered = self._reconcile_publication(launch)
+                if recovered is not None:
+                    return recovered
+                raise CandidateWorkflowUnavailable(
+                    "The local mapping publication witness is inconsistent."
+                ) from None
+            recovered = self._settle_failed_publication(launch)
+            if recovered is not None:
+                return recovered
             raise
-        self._terminal(launch.attempt_id, "validated_response", "")
-        self._phase1_port.record_disclosure_lifecycle(
+        if self._record_phase1_terminal(launch, "validated_response", "") != "validated_response":
+            raise CandidateWorkflowUnavailable(
+                "The Phase I disclosure terminal state does not match publication."
+            )
+        return assessment_id
+
+    def _reconcile_publication(self, launch: LocalManualMappingLaunch) -> str | None:
+        record, state = self._attempt(launch)
+        assessment_id = _assessment_id(launch)
+        with self._coordinator._session_factory() as session:
+            published = session.get(Phase2MatchAssessment, assessment_id)
+            witness_valid = published is not None and _is_publication_witness(
+                session, published, launch
+            )
+        if published is not None:
+            if not witness_valid:
+                raise CandidateWorkflowUnavailable(
+                    "The local mapping publication witness is inconsistent."
+                )
+            if state in {"authorized", "consuming"}:
+                # A committed assessment is the decisive Phase II publication witness.
+                # Recover an interrupted attempt by appending its missing terminal
+                # event; never try to publish it a second time.
+                self._terminal(
+                    launch.attempt_id,
+                    "validated_response",
+                    "assessment_published_reconciliation",
+                )
+                _record, state = self._attempt(launch)
+            if state != "validated_response":
+                raise CandidateWorkflowUnavailable(
+                    "The local mapping publication witness has an invalid terminal state."
+                )
+            if (
+                self._record_phase1_terminal(launch, "validated_response", "")
+                != "validated_response"
+            ):
+                raise CandidateWorkflowUnavailable(
+                    "The Phase I disclosure terminal state does not match publication."
+                )
+            return assessment_id
+        intent = self._publication_intent(launch)
+        if state == "authorized" and not intent:
+            return None
+        if state == "validated_response":
+            raise CandidateWorkflowUnavailable(
+                "The local mapping publication witness is inconsistent."
+            )
+        if state in {"authorized", "consuming"}:
+            desired: _TerminalDisclosureState = (
+                "expired" if self._now() >= launch.expires_at else "indeterminate"
+            )
+            state = self._record_phase1_terminal(launch, desired, "publication_interrupted")
+            self._terminal(launch.attempt_id, state, "publication_interrupted")
+        if state in {
+            "expired",
+            "denied",
+            "failed",
+            "indeterminate",
+            "cancelled",
+        }:
+            self._record_phase1_terminal(launch, cast(_TerminalDisclosureState, state), "")
+            raise CandidateWorkflowUnavailable(
+                "The local mapping authorization cannot be replayed."
+            )
+        raise CandidateWorkflowUnavailable(
+            f"The local mapping attempt has an invalid recovery state: {state or record.id}."
+        )
+
+    def _settle_failed_publication(self, launch: LocalManualMappingLaunch) -> str | None:
+        _record, state = self._attempt(launch)
+        if state == "validated_response":
+            return self._reconcile_publication(launch)
+        terminal: _TerminalDisclosureState = (
+            "expired" if self._now() >= launch.expires_at else "failed"
+        )
+        terminal = self._record_phase1_terminal(launch, terminal, "publication_failed")
+        self._terminal(launch.attempt_id, terminal, "publication_failed")
+        return None
+
+    def _record_phase1_terminal(
+        self, launch: LocalManualMappingLaunch, state: _TerminalDisclosureState, reason: str
+    ) -> _TerminalDisclosureState:
+        lifecycle = self._phase1_port.record_disclosure_lifecycle(
             Phase1DisclosureLifecycleRequest(
                 authorization_id=launch.phase1_authorization_id,
                 logical_payload_digest=launch.logical_payload_digest,
-                state="validated_response",
+                state=state,
+                reason_code=reason,
             )
         )
-        return assessment_id
+        if lifecycle.state not in _TERMINAL_DISCLOSURE_STATES:
+            raise CandidateWorkflowUnavailable("The Phase I disclosure terminal state is invalid.")
+        return cast(_TerminalDisclosureState, lifecycle.state)
+
+    def _attempt(
+        self, launch: LocalManualMappingLaunch
+    ) -> tuple[Phase2LocalManualMappingAttempt, str | None]:
+        with self._coordinator._session_factory() as session:
+            record = session.scalar(
+                select(Phase2LocalManualMappingAttempt).where(
+                    Phase2LocalManualMappingAttempt.attempt_id == launch.attempt_id
+                )
+            )
+            if (
+                record is None
+                or record.logical_payload_digest != launch.logical_payload_digest
+                or record.phase1_authorization_id != launch.phase1_authorization_id
+                or record.manifest_fingerprint != launch.manifest_fingerprint
+            ):
+                raise CandidateWorkflowUnavailable(
+                    "The local mapping authorization binding changed."
+                )
+            return record, _attempt_state(session, record.id)
+
+    def _record_publication_intent(
+        self, launch: LocalManualMappingLaunch, assessment_id: str
+    ) -> None:
+        if self._publication_intent(launch):
+            raise CandidateWorkflowUnavailable(
+                "The local mapping publication intent cannot be replayed."
+            )
+        self._coordinator.recovery_ledger.append(
+            RecoveryEvent(
+                f"local-manual-publication-{launch.attempt_id}",
+                "local_manual_mapping_publication_intent",
+                {
+                    "attempt_id": launch.attempt_id,
+                    "phase1_authorization_id": launch.phase1_authorization_id,
+                    "logical_payload_digest": launch.logical_payload_digest,
+                    "manifest_fingerprint": launch.manifest_fingerprint,
+                    "assessment_id": assessment_id,
+                },
+                self._now(),
+            )
+        )
+
+    def _publication_intent(self, launch: LocalManualMappingLaunch) -> bool:
+        expected = {
+            "attempt_id": launch.attempt_id,
+            "phase1_authorization_id": launch.phase1_authorization_id,
+            "logical_payload_digest": launch.logical_payload_digest,
+            "manifest_fingerprint": launch.manifest_fingerprint,
+            "assessment_id": _assessment_id(launch),
+        }
+        events = tuple(
+            entry.event
+            for entry in self._coordinator.recovery_ledger.read_all()
+            if entry.event.event_type == "local_manual_mapping_publication_intent"
+            and entry.event.payload.get("attempt_id") == launch.attempt_id
+        )
+        if not events:
+            return False
+        if len(events) != 1 or events[0].payload != expected:
+            raise CandidateWorkflowUnavailable(
+                "The local mapping publication recovery record is invalid."
+            )
+        return True
 
     def _record_attempt(
         self,
@@ -549,35 +704,6 @@ class CandidateWorkflowService:
             )
         )
 
-    def _consume(self, attempt_id: str, digest: str) -> None:
-        def consume(session: Session) -> None:
-            record = session.scalar(
-                select(Phase2LocalManualMappingAttempt).where(
-                    Phase2LocalManualMappingAttempt.attempt_id == attempt_id
-                )
-            )
-            state = _attempt_state(session, record.id) if record is not None else None
-            if (
-                record is None
-                or state != "authorized"
-                or record.logical_payload_digest != digest
-                or record.expires_at <= self._now()
-            ):
-                raise CandidateWorkflowUnavailable(
-                    "The local mapping authorization cannot be replayed."
-                )
-            session.add(
-                Phase2LocalManualMappingAttemptEvent(
-                    id=str(uuid4()),
-                    attempt_id=record.id,
-                    sequence=2,
-                    state="consuming",
-                    reason_code="",
-                )
-            )
-
-        self._coordinator.run(consume, "consume_local_manual_mapping")
-
     def _terminal(self, attempt_id: str, state: str, reason: str) -> None:
         def terminal(session: Session) -> None:
             record = session.scalar(
@@ -593,10 +719,8 @@ class CandidateWorkflowService:
             sequence = (
                 int(
                     session.scalar(
-                        select(
-                            func.count(Phase2LocalManualMappingAttemptEvent.id).where(
-                                Phase2LocalManualMappingAttemptEvent.attempt_id == record.id
-                            )
+                        select(func.count(Phase2LocalManualMappingAttemptEvent.id)).where(
+                            Phase2LocalManualMappingAttemptEvent.attempt_id == record.id
                         )
                     )
                     or 0
@@ -770,7 +894,88 @@ def _attempt_state(session: Session, attempt_id: str) -> str | None:
     )
 
 
-def _publication_guard(session: Session, launch: LocalManualMappingLaunch) -> None:
+def _assessment_id(launch: LocalManualMappingLaunch) -> str:
+    return str(
+        uuid5(
+            NAMESPACE_URL,
+            f"phase2-local-manual-assessment:{launch.attempt_id}:{launch.logical_payload_digest}",
+        )
+    )
+
+
+def _is_publication_witness(
+    session: Session, assessment: Phase2MatchAssessment, launch: LocalManualMappingLaunch
+) -> bool:
+    if (
+        assessment.job_revision_id != launch.job_revision_id
+        or assessment.rubric_version != _RUBRIC_VERSION
+        or assessment.coverage_ledger_fingerprint
+        != canonical_fingerprint([_requirement_payload(item) for item in launch.requirements])
+        or assessment.fact_set_fingerprint != launch.manifest_fingerprint
+        or assessment.assessment_state != "stable"
+    ):
+        return False
+    if any(
+        getattr(assessment, field) != value
+        for field, value in launch.authority.persistence_fields().items()
+    ):
+        return False
+    mappings = tuple(
+        session.scalars(
+            select(Phase2RequirementMapping).where(
+                Phase2RequirementMapping.match_assessment_id == assessment.id
+            )
+        )
+    )
+    expected = {item.requirement_id: item for item in launch.requirements}
+    if len(mappings) != len(expected) or {item.requirement_id for item in mappings} != set(
+        expected
+    ):
+        return False
+    allowed = {
+        (edge.requirement_id, choice.claim_id, choice.revision_id, choice.support_assertion_id)
+        for edge in launch.manifest.edges
+        for choice in launch.manifest.choices
+        if choice.claim_id == edge.claim_id
+    }
+    for mapping in mappings:
+        requirement = expected[mapping.requirement_id]
+        if (
+            mapping.requirement_kind != requirement.kind.value
+            or mapping.component != requirement.component.value
+            or mapping.source_span_id != requirement.source_span_id
+            or mapping.source_start_offset != requirement.start_offset
+            or mapping.source_end_offset != requirement.end_offset
+            or mapping.reason_code not in _RELATION_REASONS[EvidenceRelation(mapping.relation)]
+        ):
+            return False
+        if (
+            mapping.relation != EvidenceRelation.NONE.value
+            and (
+                mapping.requirement_id,
+                mapping.claim_id,
+                mapping.fact_revision_id,
+                mapping.support_assertion_id,
+            )
+            not in allowed
+        ):
+            return False
+    return (
+        session.scalar(
+            select(func.count(Phase2MatchComponent.id)).where(
+                Phase2MatchComponent.match_assessment_id == assessment.id
+            )
+        )
+        == 7
+    )
+
+
+def _publication_guard(
+    session: Session,
+    launch: LocalManualMappingLaunch,
+    assessment_id: str,
+    now: datetime,
+) -> None:
     revision = session.get(Phase2JobRevision, launch.job_revision_id)
     if revision is None or not _is_current(session, revision):
         raise CandidateWorkflowUnavailable("The job revision is not current.")
@@ -778,6 +983,43 @@ def _publication_guard(session: Session, launch: LocalManualMappingLaunch) -> No
         raise CandidateWorkflowUnavailable("The selected location does not belong to this job.")
     if extract_public_requirements(revision) != launch.requirements:
         raise CandidateWorkflowUnavailable("The job requirements changed before publication.")
+    record = session.scalar(
+        select(Phase2LocalManualMappingAttempt).where(
+            Phase2LocalManualMappingAttempt.attempt_id == launch.attempt_id
+        )
+    )
+    state = _attempt_state(session, record.id) if record is not None else None
+    expires_at = record.expires_at if record is not None else now
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if (
+        record is None
+        or state != "authorized"
+        or record.logical_payload_digest != launch.logical_payload_digest
+        or record.phase1_authorization_id != launch.phase1_authorization_id
+        or record.manifest_fingerprint != launch.manifest_fingerprint
+        or expires_at <= now
+        or session.get(Phase2MatchAssessment, assessment_id) is not None
+    ):
+        raise CandidateWorkflowUnavailable("The local mapping authorization cannot be replayed.")
+    session.add_all(
+        (
+            Phase2LocalManualMappingAttemptEvent(
+                id=str(uuid4()),
+                attempt_id=record.id,
+                sequence=2,
+                state="consuming",
+                reason_code="",
+            ),
+            Phase2LocalManualMappingAttemptEvent(
+                id=str(uuid4()),
+                attempt_id=record.id,
+                sequence=3,
+                state="validated_response",
+                reason_code="assessment_published",
+            ),
+        )
+    )
 
 
 def _requirement_payload(item: Requirement) -> dict[str, object]:

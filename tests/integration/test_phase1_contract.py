@@ -443,9 +443,7 @@ def _disclosure_request(
     expires_at: datetime | None = None,
 ) -> Phase1DisclosureAuthorizationRequest:
     now = datetime.now(UTC)
-    issued_at = (
-        expires_at - timedelta(minutes=10) if expires_at is not None else now
-    )
+    issued_at = expires_at - timedelta(minutes=10) if expires_at is not None else now
     context = Phase1DisclosurePayloadContext(
         packet_id="packet-1",
         attempt_id=attempt_id,
@@ -508,9 +506,7 @@ def test_preflight_is_durable_reused_and_changed_scope_is_rejected(
         )
         manifest = _ready_manifest(coordinator, contract)
         repeated = contract.snapshot_matching_retrieval_manifest(manifest.query)
-        changed = manifest.query.model_copy(
-            update={"launch_session_fingerprint": "f" * 64}
-        )
+        changed = manifest.query.model_copy(update={"launch_session_fingerprint": "f" * 64})
 
         assert repeated == manifest
         with pytest.raises(Phase1ContractUnavailable, match="preflight scope"):
@@ -545,9 +541,7 @@ def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blo
         changed_context = request.context.model_copy(update={"nonce": "changed-nonce"})
         changed_request = Phase1DisclosureAuthorizationRequest(
             context=changed_context,
-            logical_payload_digest=contract.disclosure_payload_digest(
-                manifest, changed_context
-            ),
+            logical_payload_digest=contract.disclosure_payload_digest(manifest, changed_context),
         )
         with pytest.raises(Phase1ContractUnavailable, match="cannot be reused"):
             contract.authorize_matching_disclosure(changed_request)
@@ -582,12 +576,29 @@ def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blo
             contract.release_matching_wording(release_request)
         with pytest.raises(Phase1ContractUnavailable, match="replayed"):
             contract.authorize_matching_disclosure(request)
+        failed = contract.record_disclosure_lifecycle(
+            Phase1DisclosureLifecycleRequest(
+                authorization_id=receipt.authorization_id,
+                logical_payload_digest=receipt.logical_payload_digest,
+                state="failed",
+                reason_code="publication_failed",
+            )
+        )
+        assert (
+            contract.record_disclosure_lifecycle(
+                Phase1DisclosureLifecycleRequest(
+                    authorization_id=receipt.authorization_id,
+                    logical_payload_digest=receipt.logical_payload_digest,
+                    state="failed",
+                    reason_code="retry_after_phase2_recovery",
+                )
+            )
+            == failed
+        )
 
         factory = session_factory_for(coordinator.engine)
         with factory() as session:
-            authorization = session.get(
-                Phase1FactDisclosureAuthorization, receipt.authorization_id
-            )
+            authorization = session.get(Phase1FactDisclosureAuthorization, receipt.authorization_id)
             assert authorization is not None
             assert "Approved safe wording" not in str(authorization.context_json)
             assert request.context.nonce not in str(authorization.context_json)
@@ -602,7 +613,7 @@ def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blo
                         )
                     )
                 )
-                == 2
+                == 3
             )
             assert (
                 len(
@@ -618,9 +629,7 @@ def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blo
                 == 2
             )
             audit_events = tuple(
-                session.scalars(
-                    select(AuditEvent).where(AuditEvent.area == "matching_disclosure")
-                )
+                session.scalars(select(AuditEvent).where(AuditEvent.area == "matching_disclosure"))
             )
             assert len(audit_events) >= 2
 
@@ -671,7 +680,7 @@ def test_expiry_discovered_at_release_is_recorded_and_never_released(
             assert states == ("authorized", "expired")
 
 
-def test_expiry_before_lifecycle_is_recorded_and_rejected(
+def test_expiry_before_lifecycle_is_returned_as_a_durable_terminal_receipt(
     vault_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with _approved_vault(vault_settings) as coordinator:
@@ -693,14 +702,14 @@ def test_expiry_before_lifecycle_is_recorded_and_rejected(
                 return request.context.expires_at + timedelta(seconds=1)
 
         monkeypatch.setattr(phase1_service_module, "datetime", AfterExpiry)
-        with pytest.raises(Phase1ContractUnavailable, match="expired"):
-            contract.record_disclosure_lifecycle(
-                Phase1DisclosureLifecycleRequest(
-                    authorization_id=receipt.authorization_id,
-                    logical_payload_digest=receipt.logical_payload_digest,
-                    state="consuming",
-                )
+        lifecycle = contract.record_disclosure_lifecycle(
+            Phase1DisclosureLifecycleRequest(
+                authorization_id=receipt.authorization_id,
+                logical_payload_digest=receipt.logical_payload_digest,
+                state="consuming",
             )
+        )
+        assert lifecycle.state == "expired"
 
         factory = session_factory_for(coordinator.engine)
         with factory() as session:
@@ -815,9 +824,7 @@ def _taxonomy_query(
     return Phase1MatchingRequirementQuery(
         requirement_ids=tuple(item.requirement_id for item in requirements),
         job_revision_id=f"job-revision-{job_suffix}",
-        coverage_ledger_fingerprint=canonical_fingerprint(
-            {"coverage": job_suffix}
-        ),
+        coverage_ledger_fingerprint=canonical_fingerprint({"coverage": job_suffix}),
         launch_session_fingerprint=canonical_fingerprint({"launch": job_suffix}),
         requirements=requirements,
     )
@@ -896,9 +903,7 @@ def test_taxonomy_budget_denies_the_33rd_unique_id_and_new_epoch_resets_active_b
         )
         with pytest.raises(Phase1ContractUnavailable, match="taxonomy_budget_exhausted"):
             contract.authorize_matching_disclosure(
-                _disclosure_request(
-                    third_manifest, attempt_id="budget-3", nonce="budget-nonce-3"
-                )
+                _disclosure_request(third_manifest, attempt_id="budget-3", nonce="budget-nonce-3")
             )
 
         contract.start_new_matching_disclosure_epoch(
@@ -911,17 +916,13 @@ def test_taxonomy_budget_denies_the_33rd_unique_id_and_new_epoch_resets_active_b
             _taxonomy_query("third", taxonomy_ids[32:])
         )
         renewed = contract.authorize_matching_disclosure(
-            _disclosure_request(
-                renewed_manifest, attempt_id="budget-4", nonce="budget-nonce-4"
-            )
+            _disclosure_request(renewed_manifest, attempt_id="budget-4", nonce="budget-nonce-4")
         )
         assert renewed.disclosure_budget_epoch == 2
 
         factory = session_factory_for(coordinator.engine)
         with factory() as session:
-            authorizations = tuple(
-                session.scalars(select(Phase1FactDisclosureAuthorization))
-            )
+            authorizations = tuple(session.scalars(select(Phase1FactDisclosureAuthorization)))
             assert len(authorizations) == 4
             assert {row.disclosure_budget_epoch for row in authorizations} == {1, 2}
 
@@ -1087,9 +1088,7 @@ def test_matching_port_rejects_a_changed_resume_fact_projection(
         )
         port = InternalPhase1MatchingPort(contract)
         projection = port.resume_fact_projection(
-            Phase1ResumeFactProjectionRequest(
-                requirement_ids=("skills.python",)
-            )
+            Phase1ResumeFactProjectionRequest(requirement_ids=("skills.python",))
         )
 
         def change_readiness_generation(session: object) -> None:
