@@ -30,7 +30,7 @@ from job_search_cockpit.storage.recovery_ledger import InvalidRecoveryLedger
 from job_search_cockpit.web.app import create_app
 from job_search_cockpit.web.security import LaunchSession
 
-CURRENT_SCHEMA = "0002_phase1_contract"
+CURRENT_SCHEMA = "0003_phase1_matching_disclosure"
 
 
 class StartupError(RuntimeError):

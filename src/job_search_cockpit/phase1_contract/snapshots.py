@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime
 from hashlib import sha256
 from typing import Literal
 
@@ -332,11 +333,17 @@ class Phase1MatchingRequirementQuery(BaseModel):
 class Phase1MatchingManifestChoice(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    canonical_key: str
     claim_id: str
     revision_id: str
     support_assertion_id: str
     safe_wording_sha256: str
+
+    @field_validator("safe_wording_sha256")
+    @classmethod
+    def validate_wording_hash(cls, value: str) -> str:
+        if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("A manifest wording hash must be lowercase SHA-256.")
+        return value
 
 
 class Phase1MatchingRelevanceEdge(BaseModel):
@@ -376,6 +383,186 @@ class Phase1MatchingRetrievalManifest(BaseModel):
     authority_fingerprint: str
     authority_generation: int
     restore_generation: int
+    disclosure_budget_epoch: int = Field(ge=1)
+    disclosure_policy_generation: int = Field(ge=1)
+    fingerprint: str
+
+
+class Phase1DisclosurePayloadContext(BaseModel):
+    """Typed Phase II digest context; contains metadata and never career wording."""
+
+    model_config = ConfigDict(frozen=True)
+
+    context_version: Literal["phase1.matching-disclosure-context.v1"] = (
+        "phase1.matching-disclosure-context.v1"
+    )
+    packet_id: str = Field(min_length=1, max_length=160)
+    attempt_id: str = Field(min_length=1, max_length=160)
+    nonce: str = Field(min_length=1, max_length=160)
+    phase2_authorization_id: str = Field(min_length=1, max_length=160)
+    manifest_fingerprint: str
+    job_revision_id: str = Field(min_length=1, max_length=255)
+    selected_location_path: tuple[str, ...] = Field(min_length=1, max_length=8)
+    coverage_ledger_fingerprint: str
+    validated_requirements_fingerprint: str
+    rubric_fingerprint: str
+    retrieval_configuration_version: str = Field(min_length=1, max_length=120)
+    interpreter_configuration_version: str = Field(min_length=1, max_length=120)
+    response_schema_version: str = Field(min_length=1, max_length=120)
+    phase1_profile_generation: int = Field(ge=0)
+    phase1_readiness_generation: int = Field(ge=0)
+    phase1_authority_generation: int = Field(ge=0)
+    phase1_restore_generation: int = Field(ge=0)
+    disclosure_budget_epoch: int = Field(ge=1)
+    disclosure_policy_generation: int = Field(ge=1)
+    phase2_activation_generation: int = Field(ge=0)
+    phase2_restore_generation: int = Field(ge=0)
+    recipient_mode: Literal["local_manual"] = "local_manual"
+    issued_at: datetime
+    expires_at: datetime
+    allowed_relations: tuple[Literal["direct", "adjacent", "none"], ...] = Field(
+        min_length=1, max_length=3
+    )
+    allowed_reason_codes: tuple[str, ...] = Field(min_length=1, max_length=16)
+
+    @field_validator(
+        "manifest_fingerprint",
+        "coverage_ledger_fingerprint",
+        "validated_requirements_fingerprint",
+        "rubric_fingerprint",
+    )
+    @classmethod
+    def validate_sha256(cls, value: str) -> str:
+        if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("Disclosure fingerprints must be lowercase SHA-256 values.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_context(self) -> "Phase1DisclosurePayloadContext":
+        if self.expires_at <= self.issued_at:
+            raise ValueError("Disclosure expiry must follow its issue time.")
+        if len(set(self.selected_location_path)) != len(self.selected_location_path):
+            raise ValueError("The selected location path is invalid.")
+        if len(set(self.allowed_relations)) != len(self.allowed_relations):
+            raise ValueError("Allowed relations must be unique.")
+        if len(set(self.allowed_reason_codes)) != len(self.allowed_reason_codes):
+            raise ValueError("Allowed reason codes must be unique.")
+        return self
+
+
+class Phase1DisclosureAuthorizationRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    context: Phase1DisclosurePayloadContext
+    logical_payload_digest: str
+
+    @field_validator("logical_payload_digest")
+    @classmethod
+    def validate_digest(cls, value: str) -> str:
+        if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("The logical payload digest must be lowercase SHA-256.")
+        return value
+
+
+DisclosureState = Literal[
+    "authorized",
+    "consuming",
+    "validated_response",
+    "expired",
+    "denied",
+    "failed",
+    "indeterminate",
+    "cancelled",
+]
+
+
+class Phase1FactDisclosureAuthorizationSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    authorization_id: str
+    attempt_id: str
+    nonce_sha256: str
+    manifest_fingerprint: str
+    logical_payload_digest: str
+    disclosure_budget_epoch: int = Field(ge=1)
+    disclosure_policy_generation: int = Field(ge=1)
+    state: DisclosureState
+    expires_at: datetime
+    fingerprint: str
+
+
+class Phase1WordingReleaseRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    authorization: Phase1FactDisclosureAuthorizationSnapshot
+    attempt_id: str = Field(min_length=1, max_length=160)
+    nonce: str = Field(min_length=1, max_length=160)
+
+
+class Phase1DisclosureLifecycleRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    authorization_id: str = Field(min_length=1, max_length=160)
+    logical_payload_digest: str
+    state: Literal[
+        "consuming",
+        "validated_response",
+        "expired",
+        "denied",
+        "failed",
+        "indeterminate",
+        "cancelled",
+    ]
+    reason_code: str = Field(default="", max_length=120)
+
+
+class Phase1DisclosureLifecycleSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    event_id: str
+    authorization_id: str
+    sequence: int = Field(ge=1)
+    state: DisclosureState
+    fingerprint: str
+
+
+class Phase1MatchingReleasedChoice(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    canonical_key: str
+    claim_id: str
+    revision_id: str
+    support_assertion_id: str
+    safe_wording: str
+    safe_wording_sha256: str
+
+
+class Phase1MatchingWordingRelease(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    contract_version: Literal["phase1.matching-wording-release.v1"] = (
+        "phase1.matching-wording-release.v1"
+    )
+    authorization_id: str
+    logical_payload_digest: str
+    manifest_fingerprint: str
+    choices: tuple[Phase1MatchingReleasedChoice, ...]
+    edges: tuple[Phase1MatchingRelevanceEdge, ...]
+    fingerprint: str
+
+
+class Phase1DisclosureEpochRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    reason: str = Field(min_length=1, max_length=500)
+    confirmation: str = Field(min_length=1, max_length=80)
+
+
+class Phase1DisclosureEpochSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    epoch_number: int = Field(ge=1)
+    policy_generation: int = Field(ge=1)
     fingerprint: str
 
 

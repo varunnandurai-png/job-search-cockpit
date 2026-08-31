@@ -4,13 +4,21 @@ from job_search_cockpit.phase1_contract.service import (
 )
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
+    Phase1DisclosureAuthorizationRequest,
+    Phase1DisclosureEpochRequest,
+    Phase1DisclosureEpochSnapshot,
+    Phase1DisclosureLifecycleRequest,
+    Phase1DisclosureLifecycleSnapshot,
+    Phase1FactDisclosureAuthorizationSnapshot,
     Phase1ManualContentReviewReceipt,
     Phase1ManualContentReviewRequest,
     Phase1MatchingFactSetSnapshot,
     Phase1MatchingRequirementQuery,
     Phase1MatchingRetrievalManifest,
+    Phase1MatchingWordingRelease,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
+    Phase1WordingReleaseRequest,
 )
 
 
@@ -79,6 +87,26 @@ class InternalPhase1MatchingPort:
         self, expected: Phase1MatchingRetrievalManifest
     ) -> Phase1MatchingRetrievalManifest:
         return self._contract_service.revalidate_matching_retrieval_manifest(expected)
+
+    def authorize_matching_disclosure(
+        self, request: Phase1DisclosureAuthorizationRequest
+    ) -> Phase1FactDisclosureAuthorizationSnapshot:
+        return self._contract_service.authorize_matching_disclosure(request)
+
+    def release_matching_wording(
+        self, request: Phase1WordingReleaseRequest
+    ) -> Phase1MatchingWordingRelease:
+        return self._contract_service.release_matching_wording(request)
+
+    def record_disclosure_lifecycle(
+        self, request: Phase1DisclosureLifecycleRequest
+    ) -> Phase1DisclosureLifecycleSnapshot:
+        return self._contract_service.record_disclosure_lifecycle(request)
+
+    def start_new_matching_disclosure_epoch(
+        self, request: Phase1DisclosureEpochRequest
+    ) -> Phase1DisclosureEpochSnapshot:
+        return self._contract_service.start_new_matching_disclosure_epoch(request)
 
     def request_manual_content_review(
         self, request: Phase1ManualContentReviewRequest

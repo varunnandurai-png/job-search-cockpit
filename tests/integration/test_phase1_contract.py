@@ -1,9 +1,12 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
+import job_search_cockpit.phase1_contract.service as phase1_service_module
 from job_search_cockpit.config import Settings
 from job_search_cockpit.facts.types import Sensitivity
 from job_search_cockpit.phase1_contract.matching_port import InternalPhase1MatchingPort
@@ -13,10 +16,16 @@ from job_search_cockpit.phase1_contract.service import (
     Phase1ContractUnavailable,
 )
 from job_search_cockpit.phase1_contract.snapshots import (
+    Phase1DisclosureAuthorizationRequest,
+    Phase1DisclosureEpochRequest,
+    Phase1DisclosureLifecycleRequest,
+    Phase1DisclosurePayloadContext,
     Phase1ManualContentReviewRequest,
     Phase1MatchingRequirementPredicate,
     Phase1MatchingRequirementQuery,
     Phase1ResumeFactProjectionRequest,
+    Phase1WordingReleaseRequest,
+    canonical_fingerprint,
 )
 from job_search_cockpit.search_profile.catalog import build_profile_v1
 from job_search_cockpit.search_profile.service import (
@@ -24,17 +33,29 @@ from job_search_cockpit.search_profile.service import (
     profile_diff_digest,
     seed_profile_v1,
 )
-from job_search_cockpit.storage.database import create_engine_for, upgrade_database
+from job_search_cockpit.storage.database import (
+    create_engine_for,
+    session_factory_for,
+    upgrade_database,
+)
 from job_search_cockpit.storage.models import (
+    AuditEvent,
     Claim,
     ClaimRevision,
     ClaimStatus,
     ClaimSupportAssertion,
     ImportRun,
     ImportRunSource,
+    Phase1AcceptanceReceipt,
     Phase1AuthorityState,
+    Phase1FactDisclosureAuthorization,
+    Phase1FactDisclosureLifecycleEvent,
+    Phase1FactDisclosureReleaseEvent,
+    Phase1MatchingDisclosureEpoch,
+    Phase1MatchingRetrievalPreflight,
 )
 from job_search_cockpit.storage.mutation import AppInstanceLock, MutationCoordinator
+from job_search_cockpit.storage.recovery_ledger import RecoveryEvent
 
 
 @contextmanager
@@ -397,10 +418,6 @@ def test_matching_preflight_returns_only_relevant_eligible_wording_hashes(
         )
 
     assert manifest.complete is True
-    assert tuple(choice.canonical_key for choice in manifest.choices) == (
-        "skills.product-delivery-a",
-        "skills.product-delivery-z",
-    )
     assert tuple(choice.claim_id for choice in manifest.choices) == (
         "claim-a-relevant",
         "claim-z-relevant",
@@ -415,6 +432,534 @@ def test_matching_preflight_returns_only_relevant_eligible_wording_hashes(
     assert "permission" not in serialized
     assert "source_document" not in serialized
     assert "credential" not in serialized
+    assert "skills.product-delivery" not in serialized
+
+
+def _disclosure_request(
+    manifest: object,
+    *,
+    attempt_id: str = "attempt-1",
+    nonce: str = "nonce-1",
+    expires_at: datetime | None = None,
+) -> Phase1DisclosureAuthorizationRequest:
+    now = datetime.now(UTC)
+    issued_at = (
+        expires_at - timedelta(minutes=10) if expires_at is not None else now
+    )
+    context = Phase1DisclosurePayloadContext(
+        packet_id="packet-1",
+        attempt_id=attempt_id,
+        nonce=nonce,
+        manifest_fingerprint=manifest.fingerprint,
+        job_revision_id=manifest.query.job_revision_id,
+        selected_location_path=("India", "Telangana", "Hyderabad"),
+        coverage_ledger_fingerprint=manifest.query.coverage_ledger_fingerprint,
+        validated_requirements_fingerprint="1" * 64,
+        rubric_fingerprint="2" * 64,
+        retrieval_configuration_version=manifest.retrieval_policy_version,
+        interpreter_configuration_version="local-manual.v1",
+        response_schema_version="mapping-response.v1",
+        phase1_profile_generation=manifest.profile_generation,
+        phase1_readiness_generation=manifest.readiness_generation,
+        phase1_authority_generation=manifest.authority_generation,
+        phase1_restore_generation=manifest.restore_generation,
+        disclosure_budget_epoch=manifest.disclosure_budget_epoch,
+        disclosure_policy_generation=manifest.disclosure_policy_generation,
+        phase2_activation_generation=7,
+        phase2_restore_generation=3,
+        recipient_mode="local_manual",
+        issued_at=issued_at,
+        expires_at=expires_at or now + timedelta(minutes=10),
+        phase2_authorization_id="phase2-auth-1",
+        allowed_relations=("direct", "adjacent", "none"),
+        allowed_reason_codes=("approved_evidence", "no_approved_evidence"),
+    )
+    digest = Phase1ContractService.disclosure_payload_digest(manifest, context)
+    return Phase1DisclosureAuthorizationRequest(context=context, logical_payload_digest=digest)
+
+
+def _ready_manifest(
+    coordinator: MutationCoordinator, contract: Phase1ContractService, *, suffix: str = "one"
+) -> object:
+    def add_fact(session: object) -> None:
+        _add_fact(
+            session,
+            suffix=suffix,
+            canonical_key=f"skills.product-delivery-{suffix}",
+            wording=f"Approved safe wording {suffix}.",
+        )
+
+    coordinator.run(add_fact, f"disclosure_fixture_{suffix}", expected_version=None)
+    return contract.snapshot_matching_retrieval_manifest(
+        _semantic_query(_product_delivery_requirement())
+    )
+
+
+def test_preflight_is_durable_reused_and_changed_scope_is_rejected(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-preflight-durable",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+        manifest = _ready_manifest(coordinator, contract)
+        repeated = contract.snapshot_matching_retrieval_manifest(manifest.query)
+        changed = manifest.query.model_copy(
+            update={"launch_session_fingerprint": "f" * 64}
+        )
+
+        assert repeated == manifest
+        with pytest.raises(Phase1ContractUnavailable, match="preflight scope"):
+            contract.snapshot_matching_retrieval_manifest(changed)
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            assert len(tuple(session.scalars(select(Phase1MatchingRetrievalPreflight)))) == 1
+
+
+def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blocks_replay(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-disclosure-pass",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+        manifest = _ready_manifest(coordinator, contract)
+        request = _disclosure_request(manifest)
+
+        with pytest.raises(Phase1ContractUnavailable, match="digest"):
+            contract.authorize_matching_disclosure(
+                _disclosure_request(
+                    manifest, attempt_id="attempt-bad-digest", nonce="nonce-bad"
+                ).model_copy(update={"logical_payload_digest": "0" * 64})
+            )
+        receipt = contract.authorize_matching_disclosure(request)
+        assert contract.authorize_matching_disclosure(request) == receipt
+        changed_context = request.context.model_copy(update={"nonce": "changed-nonce"})
+        changed_request = Phase1DisclosureAuthorizationRequest(
+            context=changed_context,
+            logical_payload_digest=contract.disclosure_payload_digest(
+                manifest, changed_context
+            ),
+        )
+        with pytest.raises(Phase1ContractUnavailable, match="cannot be reused"):
+            contract.authorize_matching_disclosure(changed_request)
+        with pytest.raises(Phase1ContractUnavailable, match="terminal or invalid"):
+            contract.record_disclosure_lifecycle(
+                Phase1DisclosureLifecycleRequest(
+                    authorization_id=receipt.authorization_id,
+                    logical_payload_digest=receipt.logical_payload_digest,
+                    state="validated_response",
+                )
+            )
+        release_request = Phase1WordingReleaseRequest(
+            authorization=receipt,
+            attempt_id=request.context.attempt_id,
+            nonce=request.context.nonce,
+        )
+        first = contract.release_matching_wording(release_request)
+        rerelease = contract.release_matching_wording(release_request)
+        assert first == rerelease
+        assert first.choices[0].canonical_key == "skills.product-delivery-one"
+        assert first.choices[0].safe_wording == "Approved safe wording one."
+        assert first.choices[0].safe_wording_sha256 == manifest.choices[0].safe_wording_sha256
+
+        contract.record_disclosure_lifecycle(
+            Phase1DisclosureLifecycleRequest(
+                authorization_id=receipt.authorization_id,
+                logical_payload_digest=receipt.logical_payload_digest,
+                state="consuming",
+            )
+        )
+        with pytest.raises(Phase1ContractUnavailable, match="replayed"):
+            contract.release_matching_wording(release_request)
+        with pytest.raises(Phase1ContractUnavailable, match="replayed"):
+            contract.authorize_matching_disclosure(request)
+
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            authorization = session.get(
+                Phase1FactDisclosureAuthorization, receipt.authorization_id
+            )
+            assert authorization is not None
+            assert "Approved safe wording" not in str(authorization.context_json)
+            assert request.context.nonce not in str(authorization.context_json)
+            assert (
+                len(
+                    tuple(
+                        session.scalars(
+                            select(Phase1FactDisclosureLifecycleEvent).where(
+                                Phase1FactDisclosureLifecycleEvent.authorization_id
+                                == receipt.authorization_id
+                            )
+                        )
+                    )
+                )
+                == 2
+            )
+            assert (
+                len(
+                    tuple(
+                        session.scalars(
+                            select(Phase1FactDisclosureReleaseEvent).where(
+                                Phase1FactDisclosureReleaseEvent.authorization_id
+                                == receipt.authorization_id
+                            )
+                        )
+                    )
+                )
+                == 2
+            )
+            audit_events = tuple(
+                session.scalars(
+                    select(AuditEvent).where(AuditEvent.area == "matching_disclosure")
+                )
+            )
+            assert len(audit_events) >= 2
+
+
+def test_expiry_discovered_at_release_is_recorded_and_never_released(
+    vault_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-disclosure-expired",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+        manifest = _ready_manifest(coordinator, contract)
+        request = _disclosure_request(manifest)
+        receipt = contract.authorize_matching_disclosure(request)
+        assert receipt.state == "authorized"
+
+        class AfterExpiry(datetime):
+            @classmethod
+            def now(cls, tz: object = None) -> datetime:
+                del tz
+                return request.context.expires_at + timedelta(seconds=1)
+
+        monkeypatch.setattr(phase1_service_module, "datetime", AfterExpiry)
+        with pytest.raises(Phase1ContractUnavailable, match="expired"):
+            contract.release_matching_wording(
+                Phase1WordingReleaseRequest(
+                    authorization=receipt,
+                    attempt_id=request.context.attempt_id,
+                    nonce=request.context.nonce,
+                )
+            )
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            states = tuple(
+                session.scalars(
+                    select(Phase1FactDisclosureLifecycleEvent.state)
+                    .where(
+                        Phase1FactDisclosureLifecycleEvent.authorization_id
+                        == receipt.authorization_id
+                    )
+                    .order_by(Phase1FactDisclosureLifecycleEvent.sequence)
+                )
+            )
+            assert states == ("authorized", "expired")
+
+
+def test_expiry_before_lifecycle_is_recorded_and_rejected(
+    vault_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-disclosure-lifecycle-expired",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+        manifest = _ready_manifest(coordinator, contract)
+        request = _disclosure_request(manifest)
+        receipt = contract.authorize_matching_disclosure(request)
+
+        class AfterExpiry(datetime):
+            @classmethod
+            def now(cls, tz: object = None) -> datetime:
+                del tz
+                return request.context.expires_at + timedelta(seconds=1)
+
+        monkeypatch.setattr(phase1_service_module, "datetime", AfterExpiry)
+        with pytest.raises(Phase1ContractUnavailable, match="expired"):
+            contract.record_disclosure_lifecycle(
+                Phase1DisclosureLifecycleRequest(
+                    authorization_id=receipt.authorization_id,
+                    logical_payload_digest=receipt.logical_payload_digest,
+                    state="consuming",
+                )
+            )
+
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            states = tuple(
+                session.scalars(
+                    select(Phase1FactDisclosureLifecycleEvent.state)
+                    .where(
+                        Phase1FactDisclosureLifecycleEvent.authorization_id
+                        == receipt.authorization_id
+                    )
+                    .order_by(Phase1FactDisclosureLifecycleEvent.sequence)
+                )
+            )
+            assert states == ("authorized", "expired")
+
+
+def test_disclosure_epoch_requires_exact_confirmation_and_is_monotonic(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        with pytest.raises(Phase1ContractUnavailable, match="confirmation"):
+            contract.start_new_matching_disclosure_epoch(
+                Phase1DisclosureEpochRequest(reason="Budget exhausted", confirmation="wrong")
+            )
+        first = contract.start_new_matching_disclosure_epoch(
+            Phase1DisclosureEpochRequest(
+                reason="Budget exhausted after reviewed attempts",
+                confirmation="START NEW MATCHING DISCLOSURE EPOCH",
+            )
+        )
+        second = contract.start_new_matching_disclosure_epoch(
+            Phase1DisclosureEpochRequest(
+                reason="A separately reviewed matching campaign",
+                confirmation="START NEW MATCHING DISCLOSURE EPOCH",
+            )
+        )
+        assert (first.epoch_number, second.epoch_number) == (2, 3)
+        assert (first.policy_generation, second.policy_generation) == (2, 3)
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            epochs = tuple(
+                session.scalars(
+                    select(Phase1MatchingDisclosureEpoch).order_by(
+                        Phase1MatchingDisclosureEpoch.epoch_number
+                    )
+                )
+            )
+            assert [epoch.epoch_number for epoch in epochs] == [1, 2, 3]
+
+
+def test_activation_rejects_an_acceptance_receipt_from_an_older_schema(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-current-schema",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+
+        def add_outdated_receipt(session: object) -> None:
+            payload = {
+                "application_build": "older-build",
+                "schema_revision": "0002_phase1_contract",
+                "acceptance_suite_version": "older-suite",
+                "acceptance_run_id": "run-older-schema",
+                "result": "passed",
+                "result_fingerprint": "d" * 64,
+                "restore_high_water_mark": 0,
+                "actor": "Varun",
+                "confirmation": "I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+            }
+            session.add(
+                Phase1AcceptanceReceipt(
+                    id="outdated-schema-receipt",
+                    **payload,
+                    fingerprint=canonical_fingerprint(payload),
+                )
+            )
+
+        coordinator.run(add_outdated_receipt, "outdated_acceptance_fixture", expected_version=None)
+
+        with pytest.raises(Phase1ContractUnavailable, match="current acceptance receipt"):
+            contract.snapshot_activation_inputs()
+
+
+def _taxonomy_requirement(index: int, taxonomy_id: str) -> Phase1MatchingRequirementPredicate:
+    field_by_prefix = {
+        "capability": "capability_ids",
+        "responsibility": "responsibility_ids",
+        "domain": "domain_ids",
+    }
+    prefix = taxonomy_id.split(".", 1)[0]
+    return Phase1MatchingRequirementPredicate(
+        requirement_id=f"job.taxonomy.{index:02d}",
+        component="evidence",
+        modality="preferred",
+        **{field_by_prefix[prefix]: (taxonomy_id,)},
+    )
+
+
+def _taxonomy_query(
+    job_suffix: str, taxonomy_ids: tuple[str, ...]
+) -> Phase1MatchingRequirementQuery:
+    requirements = tuple(
+        _taxonomy_requirement(index, taxonomy_id)
+        for index, taxonomy_id in enumerate(taxonomy_ids, start=1)
+    )
+    return Phase1MatchingRequirementQuery(
+        requirement_ids=tuple(item.requirement_id for item in requirements),
+        job_revision_id=f"job-revision-{job_suffix}",
+        coverage_ledger_fingerprint=canonical_fingerprint(
+            {"coverage": job_suffix}
+        ),
+        launch_session_fingerprint=canonical_fingerprint({"launch": job_suffix}),
+        requirements=requirements,
+    )
+
+
+def test_taxonomy_budget_denies_the_33rd_unique_id_and_new_epoch_resets_active_budget(
+    vault_settings: Settings,
+) -> None:
+    taxonomy_ids = (
+        "capability.applied_ai",
+        "capability.cross_functional_leadership",
+        "capability.data_analytics",
+        "capability.lifecycle_management",
+        "capability.partner_integration",
+        "capability.platform_product",
+        "capability.product_delivery",
+        "capability.product_discovery",
+        "capability.product_strategy",
+        "capability.roadmap_prioritization",
+        "capability.stakeholder_influence",
+        "responsibility.delivery_ownership",
+        "responsibility.discovery_ownership",
+        "responsibility.executive_influence",
+        "responsibility.kpi_ownership",
+        "responsibility.people_leadership",
+        "responsibility.product_decisions",
+        "responsibility.roadmap_ownership",
+        "responsibility.technical_tradeoffs",
+        "domain.applied_ai",
+        "domain.banking",
+        "domain.billing",
+        "domain.commerce",
+        "domain.decision_support",
+        "domain.ecommerce",
+        "domain.fintech",
+        "domain.fraud",
+        "domain.fulfilment",
+        "domain.home_buying",
+        "domain.last_mile",
+        "domain.lending",
+        "domain.mortgage",
+        "domain.omnichannel",
+    )
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-taxonomy-budget",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+
+        def add_known_fact(session: object) -> None:
+            _add_fact(
+                session,
+                suffix="budget-known",
+                canonical_key="skills.product-delivery-budget-known",
+                wording="Approved product delivery wording.",
+            )
+
+        coordinator.run(add_known_fact, "taxonomy_budget_fixture", expected_version=None)
+        first_manifest = contract.snapshot_matching_retrieval_manifest(
+            _taxonomy_query("first", taxonomy_ids[:24])
+        )
+        second_manifest = contract.snapshot_matching_retrieval_manifest(
+            _taxonomy_query("second", taxonomy_ids[24:32])
+        )
+        third_manifest = contract.snapshot_matching_retrieval_manifest(
+            _taxonomy_query("third", taxonomy_ids[32:])
+        )
+        contract.authorize_matching_disclosure(
+            _disclosure_request(first_manifest, attempt_id="budget-1", nonce="budget-nonce-1")
+        )
+        contract.authorize_matching_disclosure(
+            _disclosure_request(second_manifest, attempt_id="budget-2", nonce="budget-nonce-2")
+        )
+        with pytest.raises(Phase1ContractUnavailable, match="taxonomy_budget_exhausted"):
+            contract.authorize_matching_disclosure(
+                _disclosure_request(
+                    third_manifest, attempt_id="budget-3", nonce="budget-nonce-3"
+                )
+            )
+
+        contract.start_new_matching_disclosure_epoch(
+            Phase1DisclosureEpochRequest(
+                reason="Reviewed taxonomy budget renewal",
+                confirmation="START NEW MATCHING DISCLOSURE EPOCH",
+            )
+        )
+        renewed_manifest = contract.snapshot_matching_retrieval_manifest(
+            _taxonomy_query("third", taxonomy_ids[32:])
+        )
+        renewed = contract.authorize_matching_disclosure(
+            _disclosure_request(
+                renewed_manifest, attempt_id="budget-4", nonce="budget-nonce-4"
+            )
+        )
+        assert renewed.disclosure_budget_epoch == 2
+
+        factory = session_factory_for(coordinator.engine)
+        with factory() as session:
+            authorizations = tuple(
+                session.scalars(select(Phase1FactDisclosureAuthorization))
+            )
+            assert len(authorizations) == 4
+            assert {row.disclosure_budget_epoch for row in authorizations} == {1, 2}
+
+
+def test_recovery_only_authorization_still_charges_the_fact_budget(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-recovery-budget",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+        manifest = _ready_manifest(coordinator, contract)
+        coordinator.recovery_ledger.append(
+            RecoveryEvent(
+                event_id="recovery-only-disclosure",
+                event_type="matching_disclosure_authorization",
+                payload={
+                    "attempt_id": "recovered-attempt",
+                    "epoch": 1,
+                    "fact_ids": [f"recovered-claim-{index:02d}" for index in range(64)],
+                    "taxonomy_ids": [],
+                },
+                created_at=datetime.now(UTC),
+            )
+        )
+
+        with pytest.raises(Phase1ContractUnavailable, match="fact_budget_exhausted"):
+            contract.authorize_matching_disclosure(
+                _disclosure_request(
+                    manifest,
+                    attempt_id="post-recovery-attempt",
+                    nonce="post-recovery-nonce",
+                )
+            )
 
 
 def test_matching_preflight_calls_resume_eligibility_and_excludes_unsafe_facts(

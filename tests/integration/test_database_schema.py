@@ -30,6 +30,13 @@ EXPECTED_TABLES = {
     "search_profile_versions",
     "phase1_authority_state",
     "phase1_acceptance_receipts",
+    "phase1_matching_disclosure_epochs",
+    "phase1_matching_retrieval_preflights",
+    "phase1_fact_disclosure_authorizations",
+    "phase1_fact_disclosure_authorization_facts",
+    "phase1_fact_disclosure_authorization_taxonomy",
+    "phase1_fact_disclosure_lifecycle_events",
+    "phase1_fact_disclosure_release_events",
 }
 
 
@@ -69,6 +76,13 @@ def test_migration_installs_update_and_delete_guards_for_immutable_tables(
         "named_uses",
         "confidential_permission_events",
         "phase1_acceptance_receipts",
+        "phase1_matching_disclosure_epochs",
+        "phase1_matching_retrieval_preflights",
+        "phase1_fact_disclosure_authorizations",
+        "phase1_fact_disclosure_authorization_facts",
+        "phase1_fact_disclosure_authorization_taxonomy",
+        "phase1_fact_disclosure_lifecycle_events",
+        "phase1_fact_disclosure_release_events",
     }
     assert trigger_names == {
         f"prevent_{table}_{operation}"

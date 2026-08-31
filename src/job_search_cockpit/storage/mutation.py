@@ -150,6 +150,18 @@ class MutationCoordinator:
                 self._touch_phase1_authority(session)
                 return result
 
+    def run_metadata(self, operation: Callable[[Session], T]) -> T:
+        """Commit contract metadata without changing the career-fact authority fence.
+
+        The caller may append a recovery event after flushing its database rows but
+        before returning. A ledger write failure then rolls the database transaction
+        back, while the mutex prevents interleaving with career mutations.
+        """
+        with self._mutex:
+            self._assert_available()
+            with self._session_factory() as session, session.begin():
+                return operation(session)
+
     @contextmanager
     def consistent_read(self) -> Iterator[None]:
         """Hold the mutation fence while a snapshot spans multiple database reads."""

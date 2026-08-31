@@ -437,6 +437,134 @@ class Phase1AcceptanceReceipt(Base):
     accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class Phase1MatchingDisclosureEpoch(Base):
+    __tablename__ = "phase1_matching_disclosure_epochs"
+    __table_args__ = (
+        UniqueConstraint("epoch_number"),
+        UniqueConstraint("policy_generation"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    epoch_number: Mapped[int] = mapped_column(Integer)
+    policy_generation: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(Text)
+    confirmation: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase1MatchingRetrievalPreflight(Base):
+    __tablename__ = "phase1_matching_retrieval_preflights"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_revision_id",
+            "coverage_ledger_fingerprint",
+            "disclosure_budget_epoch",
+            "phase1_authority_generation",
+            name="uq_phase1_matching_preflight_scope",
+        ),
+        UniqueConstraint("manifest_fingerprint"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_revision_id: Mapped[str] = mapped_column(String(255))
+    coverage_ledger_fingerprint: Mapped[str] = mapped_column(String(64))
+    disclosure_budget_epoch: Mapped[int] = mapped_column(Integer)
+    phase1_authority_generation: Mapped[int] = mapped_column(Integer)
+    query_fingerprint: Mapped[str] = mapped_column(String(64))
+    manifest_fingerprint: Mapped[str] = mapped_column(String(64))
+    manifest_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase1FactDisclosureAuthorization(Base):
+    __tablename__ = "phase1_fact_disclosure_authorizations"
+    __table_args__ = (
+        UniqueConstraint("attempt_id"),
+        UniqueConstraint("logical_payload_digest"),
+        CheckConstraint(
+            "initial_state IN ('authorized', 'expired', 'denied', 'failed', 'indeterminate')",
+            name="ck_phase1_fact_disclosure_initial_state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(String(160), index=True)
+    packet_id: Mapped[str] = mapped_column(String(160))
+    nonce_sha256: Mapped[str] = mapped_column(String(64))
+    phase2_authorization_id: Mapped[str] = mapped_column(String(160))
+    preflight_id: Mapped[str] = mapped_column(
+        ForeignKey("phase1_matching_retrieval_preflights.id")
+    )
+    manifest_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    logical_payload_digest: Mapped[str] = mapped_column(String(64), index=True)
+    disclosure_budget_epoch: Mapped[int] = mapped_column(Integer, index=True)
+    disclosure_policy_generation: Mapped[int] = mapped_column(Integer)
+    context_json: Mapped[dict[str, object]] = mapped_column(JSON)
+    initial_state: Mapped[str] = mapped_column(String(24))
+    reason_code: Mapped[str] = mapped_column(String(120), default="")
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase1FactDisclosureAuthorizationFact(Base):
+    __tablename__ = "phase1_fact_disclosure_authorization_facts"
+    __table_args__ = (UniqueConstraint("authorization_id", "claim_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    authorization_id: Mapped[str] = mapped_column(
+        ForeignKey("phase1_fact_disclosure_authorizations.id"), index=True
+    )
+    claim_id: Mapped[str] = mapped_column(ForeignKey("claims.id"), index=True)
+
+
+class Phase1FactDisclosureAuthorizationTaxonomy(Base):
+    __tablename__ = "phase1_fact_disclosure_authorization_taxonomy"
+    __table_args__ = (UniqueConstraint("authorization_id", "taxonomy_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    authorization_id: Mapped[str] = mapped_column(
+        ForeignKey("phase1_fact_disclosure_authorizations.id"), index=True
+    )
+    taxonomy_id: Mapped[str] = mapped_column(String(120), index=True)
+
+
+class Phase1FactDisclosureLifecycleEvent(Base):
+    __tablename__ = "phase1_fact_disclosure_lifecycle_events"
+    __table_args__ = (
+        UniqueConstraint("authorization_id", "sequence"),
+        CheckConstraint(
+            "state IN ('authorized', 'consuming', 'validated_response', 'expired', "
+            "'denied', 'failed', 'indeterminate', 'cancelled')",
+            name="ck_phase1_fact_disclosure_lifecycle_state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    authorization_id: Mapped[str] = mapped_column(
+        ForeignKey("phase1_fact_disclosure_authorizations.id"), index=True
+    )
+    logical_payload_digest: Mapped[str] = mapped_column(String(64))
+    sequence: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(24))
+    reason_code: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase1FactDisclosureReleaseEvent(Base):
+    __tablename__ = "phase1_fact_disclosure_release_events"
+    __table_args__ = (UniqueConstraint("authorization_id", "sequence"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    authorization_id: Mapped[str] = mapped_column(
+        ForeignKey("phase1_fact_disclosure_authorizations.id"), index=True
+    )
+    logical_payload_digest: Mapped[str] = mapped_column(String(64))
+    release_fingerprint: Mapped[str] = mapped_column(String(64))
+    sequence: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 Index(
     "uq_source_occurrence_null_safe_identity",
     SourceOccurrence.source_key,

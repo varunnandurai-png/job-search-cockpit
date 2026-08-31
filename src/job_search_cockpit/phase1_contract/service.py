@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import uuid4
 
@@ -21,18 +21,28 @@ from job_search_cockpit.phase1_contract.retrieval import (
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1AcceptanceReceiptSnapshot,
     Phase1ActivationInputs,
+    Phase1DisclosureAuthorizationRequest,
+    Phase1DisclosureEpochRequest,
+    Phase1DisclosureEpochSnapshot,
+    Phase1DisclosureLifecycleRequest,
+    Phase1DisclosureLifecycleSnapshot,
+    Phase1DisclosurePayloadContext,
+    Phase1FactDisclosureAuthorizationSnapshot,
     Phase1ManualContentReviewReceipt,
     Phase1ManualContentReviewRequest,
     Phase1MatchingFactSetSnapshot,
     Phase1MatchingFactSnapshot,
     Phase1MatchingManifestChoice,
+    Phase1MatchingReleasedChoice,
     Phase1MatchingRelevanceEdge,
     Phase1MatchingRequirementQuery,
     Phase1MatchingRetrievalManifest,
+    Phase1MatchingWordingRelease,
     Phase1ReadinessSnapshot,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
     Phase1ResumeFactSnapshot,
+    Phase1WordingReleaseRequest,
     SearchProfileSnapshot,
     canonical_fingerprint,
 )
@@ -41,6 +51,7 @@ from job_search_cockpit.search_profile.catalog import SearchProfilePayload
 from job_search_cockpit.search_profile.service import get_active_profile
 from job_search_cockpit.storage.database import session_factory_for
 from job_search_cockpit.storage.models import (
+    AuditEvent,
     Claim,
     ClaimRevision,
     ClaimSupportAssertion,
@@ -48,8 +59,16 @@ from job_search_cockpit.storage.models import (
     ImportRunSource,
     Phase1AcceptanceReceipt,
     Phase1AuthorityState,
+    Phase1FactDisclosureAuthorization,
+    Phase1FactDisclosureAuthorizationFact,
+    Phase1FactDisclosureAuthorizationTaxonomy,
+    Phase1FactDisclosureLifecycleEvent,
+    Phase1FactDisclosureReleaseEvent,
+    Phase1MatchingDisclosureEpoch,
+    Phase1MatchingRetrievalPreflight,
 )
 from job_search_cockpit.storage.mutation import MutationCoordinator
+from job_search_cockpit.storage.recovery_ledger import RecoveryEvent
 
 
 class Phase1ContractUnavailable(RuntimeError):
@@ -161,6 +180,15 @@ class Phase1ContractService:
             )
             if receipt is None:
                 raise Phase1ContractUnavailable("A durable Phase I acceptance receipt is required.")
+            if (
+                receipt.application_build != self._build_metadata.application_build
+                or receipt.acceptance_suite_version
+                != self._build_metadata.acceptance_suite_version
+                or receipt.schema_revision != self._schema_revision(session)
+            ):
+                raise Phase1ContractUnavailable(
+                    "A current acceptance receipt is required after a build or schema change."
+                )
             authority = session.get(Phase1AuthorityState, 1)
             latest_import = session.scalar(
                 select(ImportRun).order_by(ImportRun.committed_at.desc(), ImportRun.id.desc())
@@ -360,11 +388,69 @@ class Phase1ContractService:
     def snapshot_matching_retrieval_manifest(
         self, query: Phase1MatchingRequirementQuery
     ) -> Phase1MatchingRetrievalManifest:
-        with self._coordinator.consistent_read():
-            return self._snapshot_matching_retrieval_manifest(query)
+        def snapshot(session: Session) -> Phase1MatchingRetrievalManifest:
+            epoch = self._current_disclosure_epoch(session)
+            authority = session.get(Phase1AuthorityState, 1)
+            if authority is None:
+                raise Phase1ContractUnavailable("The Phase I authority state is unavailable.")
+            existing = session.scalar(
+                select(Phase1MatchingRetrievalPreflight).where(
+                    Phase1MatchingRetrievalPreflight.job_revision_id == query.job_revision_id,
+                    Phase1MatchingRetrievalPreflight.coverage_ledger_fingerprint
+                    == query.coverage_ledger_fingerprint,
+                    Phase1MatchingRetrievalPreflight.disclosure_budget_epoch
+                    == epoch.epoch_number,
+                    Phase1MatchingRetrievalPreflight.phase1_authority_generation
+                    == authority.authority_high_water_mark,
+                )
+            )
+            query_fingerprint = canonical_fingerprint(query)
+            if existing is not None:
+                if existing.query_fingerprint != query_fingerprint:
+                    raise Phase1ContractUnavailable(
+                        "A changed query cannot reuse this matching preflight scope."
+                    )
+                return Phase1MatchingRetrievalManifest.model_validate(existing.manifest_json)
+
+            manifest = self._snapshot_matching_retrieval_manifest(
+                query,
+                disclosure_budget_epoch=epoch.epoch_number,
+                disclosure_policy_generation=epoch.policy_generation,
+            )
+            session.add(
+                Phase1MatchingRetrievalPreflight(
+                    id=str(uuid4()),
+                    job_revision_id=query.job_revision_id,
+                    coverage_ledger_fingerprint=query.coverage_ledger_fingerprint,
+                    disclosure_budget_epoch=epoch.epoch_number,
+                    phase1_authority_generation=manifest.authority_generation,
+                    query_fingerprint=manifest.query_fingerprint,
+                    manifest_fingerprint=manifest.fingerprint,
+                    manifest_json=manifest.model_dump(mode="json"),
+                )
+            )
+            session.flush()
+            return manifest
+
+        return self._coordinator.run_metadata(snapshot)
+
+    @staticmethod
+    def _current_disclosure_epoch(session: Session) -> Phase1MatchingDisclosureEpoch:
+        epoch = session.scalar(
+            select(Phase1MatchingDisclosureEpoch).order_by(
+                Phase1MatchingDisclosureEpoch.epoch_number.desc()
+            )
+        )
+        if epoch is None:
+            raise Phase1ContractUnavailable("The matching disclosure epoch is unavailable.")
+        return epoch
 
     def _snapshot_matching_retrieval_manifest(
-        self, query: Phase1MatchingRequirementQuery
+        self,
+        query: Phase1MatchingRequirementQuery,
+        *,
+        disclosure_budget_epoch: int,
+        disclosure_policy_generation: int,
     ) -> Phase1MatchingRetrievalManifest:
         inputs = self.snapshot_activation_inputs()
         factory = session_factory_for(self._coordinator.engine)
@@ -443,7 +529,6 @@ class Phase1ContractService:
             omission_counts["ineligible_fact"] = ineligible_relevant
         choices = tuple(
             Phase1MatchingManifestChoice(
-                canonical_key=item.canonical_key,
                 claim_id=item.claim_id,
                 revision_id=item.revision_id,
                 support_assertion_id=item.support_assertion_id,
@@ -481,6 +566,8 @@ class Phase1ContractService:
             "authority_fingerprint": inputs.acceptance_receipt.fingerprint,
             "authority_generation": inputs.readiness.authority_high_water_mark,
             "restore_generation": inputs.readiness.restore_generation,
+            "disclosure_budget_epoch": disclosure_budget_epoch,
+            "disclosure_policy_generation": disclosure_policy_generation,
         }
         return Phase1MatchingRetrievalManifest.model_validate(
             {**fields, "fingerprint": canonical_fingerprint(fields)}
@@ -489,10 +576,704 @@ class Phase1ContractService:
     def revalidate_matching_retrieval_manifest(
         self, expected: Phase1MatchingRetrievalManifest
     ) -> Phase1MatchingRetrievalManifest:
-        current = self.snapshot_matching_retrieval_manifest(expected.query)
+        with self._coordinator.consistent_read():
+            current = self._snapshot_matching_retrieval_manifest(
+                expected.query,
+                disclosure_budget_epoch=expected.disclosure_budget_epoch,
+                disclosure_policy_generation=expected.disclosure_policy_generation,
+            )
         if current != expected:
             raise Phase1ContractUnavailable("The Phase I matching retrieval manifest changed.")
         return current
+
+    @staticmethod
+    def disclosure_payload_digest(
+        manifest: Phase1MatchingRetrievalManifest,
+        context: Phase1DisclosurePayloadContext,
+    ) -> str:
+        """Digest the exact logical payload shared with Phase II."""
+        return canonical_fingerprint(
+            {
+                "digest_version": "phase1.matching-disclosure-digest.v1",
+                "manifest": manifest,
+                "context": context,
+            }
+        )
+
+    @staticmethod
+    def _authorization_state(
+        session: Session, authorization: Phase1FactDisclosureAuthorization
+    ) -> str:
+        event = session.scalar(
+            select(Phase1FactDisclosureLifecycleEvent)
+            .where(
+                Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id
+            )
+            .order_by(Phase1FactDisclosureLifecycleEvent.sequence.desc())
+        )
+        if event is None:
+            raise Phase1ContractUnavailable("The disclosure lifecycle is unavailable.")
+        return event.state
+
+    @classmethod
+    def _authorization_snapshot(
+        cls, session: Session, authorization: Phase1FactDisclosureAuthorization
+    ) -> Phase1FactDisclosureAuthorizationSnapshot:
+        state = cls._authorization_state(session, authorization)
+        expires_at = authorization.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        fields = {
+            "authorization_id": authorization.id,
+            "attempt_id": authorization.attempt_id,
+            "nonce_sha256": authorization.nonce_sha256,
+            "manifest_fingerprint": authorization.manifest_fingerprint,
+            "logical_payload_digest": authorization.logical_payload_digest,
+            "disclosure_budget_epoch": authorization.disclosure_budget_epoch,
+            "disclosure_policy_generation": authorization.disclosure_policy_generation,
+            "state": state,
+            "expires_at": expires_at,
+        }
+        fingerprint_fields = {
+            **fields,
+            "expires_at": expires_at.isoformat(),
+        }
+        return Phase1FactDisclosureAuthorizationSnapshot.model_validate(
+            {**fields, "fingerprint": canonical_fingerprint(fingerprint_fields)}
+        )
+
+    @staticmethod
+    def _context_binding_error(
+        manifest: Phase1MatchingRetrievalManifest,
+        context: Phase1DisclosurePayloadContext,
+    ) -> str:
+        expected = (
+            (context.manifest_fingerprint, manifest.fingerprint),
+            (context.job_revision_id, manifest.query.job_revision_id),
+            (
+                context.coverage_ledger_fingerprint,
+                manifest.query.coverage_ledger_fingerprint,
+            ),
+            (context.phase1_profile_generation, manifest.profile_generation),
+            (context.phase1_readiness_generation, manifest.readiness_generation),
+            (context.phase1_authority_generation, manifest.authority_generation),
+            (context.phase1_restore_generation, manifest.restore_generation),
+            (context.disclosure_budget_epoch, manifest.disclosure_budget_epoch),
+            (
+                context.disclosure_policy_generation,
+                manifest.disclosure_policy_generation,
+            ),
+            (context.retrieval_configuration_version, manifest.retrieval_policy_version),
+        )
+        if any(actual != required for actual, required in expected):
+            return "disclosure_context_mismatch"
+        if not manifest.complete:
+            return "retrieval_manifest_incomplete"
+        return ""
+
+    @staticmethod
+    def _recovered_budget_identifiers(
+        events: tuple[RecoveryEvent, ...], *, epoch: int, field: str
+    ) -> set[str]:
+        identifiers: set[str] = set()
+        for event in events:
+            if event.payload.get("epoch") != epoch:
+                continue
+            raw_identifiers = event.payload.get(field, ())
+            if not isinstance(raw_identifiers, list) or any(
+                not isinstance(identifier, str) for identifier in raw_identifiers
+            ):
+                raise Phase1ContractUnavailable("The disclosure recovery record is invalid.")
+            identifiers.update(raw_identifiers)
+        return identifiers
+
+    def authorize_matching_disclosure(
+        self, request: Phase1DisclosureAuthorizationRequest
+    ) -> Phase1FactDisclosureAuthorizationSnapshot:
+        denial_to_raise = ""
+
+        def authorize(
+            session: Session,
+        ) -> tuple[Phase1FactDisclosureAuthorizationSnapshot, str]:
+            stored_context = request.context.model_dump(mode="json")
+            stored_context.pop("nonce")
+            nonce_sha256 = sha256(request.context.nonce.encode("utf-8")).hexdigest()
+            existing = session.scalar(
+                select(Phase1FactDisclosureAuthorization).where(
+                    Phase1FactDisclosureAuthorization.attempt_id
+                    == request.context.attempt_id
+                )
+            )
+            if existing is not None:
+                if (
+                    existing.logical_payload_digest != request.logical_payload_digest
+                    or existing.context_json != stored_context
+                    or existing.nonce_sha256 != nonce_sha256
+                ):
+                    raise Phase1ContractUnavailable(
+                        "A disclosure attempt cannot be reused with a changed digest or context."
+                    )
+                snapshot = self._authorization_snapshot(session, existing)
+                if snapshot.state != "authorized":
+                    raise Phase1ContractUnavailable(
+                        "A consuming or terminal disclosure attempt cannot be replayed."
+                    )
+                return snapshot, ""
+
+            ledger_events = tuple(
+                entry.event
+                for entry in self._coordinator.recovery_ledger.read_all()
+                if entry.event.event_type == "matching_disclosure_authorization"
+            )
+            ledger_attempts = {
+                str(event.payload.get("attempt_id", "")) for event in ledger_events
+            }
+            if request.context.attempt_id in ledger_attempts:
+                raise Phase1ContractUnavailable(
+                    "The disclosure outcome is indeterminate and cannot be replayed."
+                )
+
+            preflight = session.scalar(
+                select(Phase1MatchingRetrievalPreflight).where(
+                    Phase1MatchingRetrievalPreflight.manifest_fingerprint
+                    == request.context.manifest_fingerprint
+                )
+            )
+            if preflight is None:
+                raise Phase1ContractUnavailable("The authorized retrieval manifest is unavailable.")
+            manifest = Phase1MatchingRetrievalManifest.model_validate(preflight.manifest_json)
+            epoch = self._current_disclosure_epoch(session)
+            if preflight.disclosure_budget_epoch != epoch.epoch_number:
+                raise Phase1ContractUnavailable(
+                    "A retrieval manifest from an earlier disclosure epoch cannot be authorized."
+                )
+
+            computed_digest = self.disclosure_payload_digest(manifest, request.context)
+            reason_code = self._context_binding_error(manifest, request.context)
+            if request.logical_payload_digest != computed_digest:
+                reason_code = "logical_payload_digest_mismatch"
+            now = datetime.now(UTC)
+            expires_at = request.context.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            state = "authorized"
+            if expires_at <= now:
+                state = "expired"
+                reason_code = "authorization_expired"
+            elif reason_code:
+                state = "denied"
+
+            fact_ids = {choice.claim_id for choice in manifest.choices}
+            taxonomy_ids = {
+                taxonomy_id
+                for requirement in manifest.query.requirements
+                for taxonomy_id in requirement.taxonomy_ids()
+            }
+            prior_fact_ids = set(
+                session.scalars(
+                    select(Phase1FactDisclosureAuthorizationFact.claim_id)
+                    .join(Phase1FactDisclosureAuthorization)
+                    .where(
+                        Phase1FactDisclosureAuthorization.disclosure_budget_epoch
+                        == epoch.epoch_number
+                    )
+                )
+            )
+            prior_taxonomy_ids = set(
+                session.scalars(
+                    select(Phase1FactDisclosureAuthorizationTaxonomy.taxonomy_id)
+                    .join(Phase1FactDisclosureAuthorization)
+                    .where(
+                        Phase1FactDisclosureAuthorization.disclosure_budget_epoch
+                        == epoch.epoch_number
+                    )
+                )
+            )
+            recovered_fact_ids = self._recovered_budget_identifiers(
+                ledger_events, epoch=epoch.epoch_number, field="fact_ids"
+            )
+            recovered_taxonomy_ids = self._recovered_budget_identifiers(
+                ledger_events, epoch=epoch.epoch_number, field="taxonomy_ids"
+            )
+            if len(prior_fact_ids | recovered_fact_ids | fact_ids) > 64:
+                state = "denied"
+                reason_code = "disclosure_fact_budget_exhausted"
+            if len(prior_taxonomy_ids | recovered_taxonomy_ids | taxonomy_ids) > 32:
+                state = "denied"
+                reason_code = "disclosure_taxonomy_budget_exhausted"
+
+            authorization = Phase1FactDisclosureAuthorization(
+                id=str(uuid4()),
+                attempt_id=request.context.attempt_id,
+                packet_id=request.context.packet_id,
+                nonce_sha256=nonce_sha256,
+                phase2_authorization_id=request.context.phase2_authorization_id,
+                preflight_id=preflight.id,
+                manifest_fingerprint=manifest.fingerprint,
+                logical_payload_digest=request.logical_payload_digest,
+                disclosure_budget_epoch=epoch.epoch_number,
+                disclosure_policy_generation=epoch.policy_generation,
+                context_json=stored_context,
+                initial_state=state,
+                reason_code=reason_code,
+                issued_at=request.context.issued_at,
+                expires_at=request.context.expires_at,
+            )
+            session.add(authorization)
+            for claim_id in sorted(fact_ids):
+                session.add(
+                    Phase1FactDisclosureAuthorizationFact(
+                        id=str(uuid4()), authorization_id=authorization.id, claim_id=claim_id
+                    )
+                )
+            for taxonomy_id in sorted(taxonomy_ids):
+                session.add(
+                    Phase1FactDisclosureAuthorizationTaxonomy(
+                        id=str(uuid4()),
+                        authorization_id=authorization.id,
+                        taxonomy_id=taxonomy_id,
+                    )
+                )
+            lifecycle = Phase1FactDisclosureLifecycleEvent(
+                id=str(uuid4()),
+                authorization_id=authorization.id,
+                logical_payload_digest=request.logical_payload_digest,
+                sequence=1,
+                state=state,
+                reason_code=reason_code,
+            )
+            session.add(lifecycle)
+            session.add(
+                AuditEvent(
+                    id=str(uuid4()),
+                    event_type="matching_disclosure_authorized",
+                    area="matching_disclosure",
+                    subject_id=authorization.id,
+                    summary=f"Matching disclosure authorization recorded as {state}.",
+                    before_json=None,
+                    after_json={
+                        "manifest_fingerprint": manifest.fingerprint,
+                        "logical_payload_digest": request.logical_payload_digest,
+                        "attempt_id": request.context.attempt_id,
+                        "epoch": epoch.epoch_number,
+                        "state": state,
+                        "reason_code": reason_code,
+                        "fact_count": len(fact_ids),
+                        "taxonomy_count": len(taxonomy_ids),
+                    },
+                    sensitive=False,
+                    reason=reason_code,
+                    source_label="Phase I matching disclosure",
+                )
+            )
+            session.flush()
+            self._coordinator.recovery_ledger.append(
+                RecoveryEvent(
+                    event_id=authorization.id,
+                    event_type="matching_disclosure_authorization",
+                    payload={
+                        "authorization_id": authorization.id,
+                        "attempt_id": request.context.attempt_id,
+                        "manifest_fingerprint": manifest.fingerprint,
+                        "logical_payload_digest": request.logical_payload_digest,
+                        "epoch": epoch.epoch_number,
+                        "state": state,
+                        "reason_code": reason_code,
+                        "fact_ids": sorted(fact_ids),
+                        "taxonomy_ids": sorted(taxonomy_ids),
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
+            return self._authorization_snapshot(session, authorization), reason_code
+
+        snapshot, denial_to_raise = self._coordinator.run_metadata(authorize)
+        if snapshot.state == "denied":
+            raise Phase1ContractUnavailable(
+                f"The matching disclosure was denied: {denial_to_raise}."
+            )
+        return snapshot
+
+    def record_disclosure_lifecycle(
+        self, request: Phase1DisclosureLifecycleRequest
+    ) -> Phase1DisclosureLifecycleSnapshot:
+        def record(session: Session) -> tuple[Phase1DisclosureLifecycleSnapshot, bool]:
+            authorization = session.get(
+                Phase1FactDisclosureAuthorization, request.authorization_id
+            )
+            if authorization is None:
+                raise Phase1ContractUnavailable("The disclosure authorization is unavailable.")
+            if authorization.logical_payload_digest != request.logical_payload_digest:
+                raise Phase1ContractUnavailable("The disclosure lifecycle digest changed.")
+            current = self._authorization_state(session, authorization)
+            terminals = {
+                "validated_response",
+                "expired",
+                "denied",
+                "failed",
+                "indeterminate",
+                "cancelled",
+            }
+            expires_at = authorization.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            expired_before_transition = (
+                current not in terminals and expires_at <= datetime.now(UTC)
+            )
+            if expired_before_transition:
+                next_state = "expired"
+                reason_code = "authorization_expired_before_lifecycle"
+            else:
+                allowed = (
+                    current == "authorized"
+                    and request.state
+                    in {"consuming", "expired", "denied", "failed", "indeterminate", "cancelled"}
+                ) or (current == "consuming" and request.state in terminals)
+                if not allowed:
+                    raise Phase1ContractUnavailable(
+                        "The disclosure lifecycle transition is terminal or invalid."
+                    )
+                next_state = request.state
+                reason_code = request.reason_code
+            sequence = session.scalar(
+                select(Phase1FactDisclosureLifecycleEvent.sequence)
+                .where(
+                    Phase1FactDisclosureLifecycleEvent.authorization_id == authorization.id
+                )
+                .order_by(Phase1FactDisclosureLifecycleEvent.sequence.desc())
+            )
+            event = Phase1FactDisclosureLifecycleEvent(
+                id=str(uuid4()),
+                authorization_id=authorization.id,
+                logical_payload_digest=request.logical_payload_digest,
+                sequence=int(sequence or 0) + 1,
+                state=next_state,
+                reason_code=reason_code,
+            )
+            session.add(event)
+            session.add(
+                AuditEvent(
+                    id=str(uuid4()),
+                    event_type="matching_disclosure_lifecycle",
+                    area="matching_disclosure",
+                    subject_id=authorization.id,
+                    summary=f"Matching disclosure moved from {current} to {next_state}.",
+                    before_json={"state": current},
+                    after_json={
+                        "state": next_state,
+                        "logical_payload_digest": request.logical_payload_digest,
+                    },
+                    sensitive=False,
+                    reason=reason_code,
+                    source_label="Phase I matching disclosure",
+                )
+            )
+            session.flush()
+            self._coordinator.recovery_ledger.append(
+                RecoveryEvent(
+                    event_id=event.id,
+                    event_type="matching_disclosure_lifecycle",
+                    payload={
+                        "authorization_id": authorization.id,
+                        "logical_payload_digest": request.logical_payload_digest,
+                        "sequence": event.sequence,
+                        "state": event.state,
+                        "reason_code": event.reason_code,
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
+            fields = {
+                "event_id": event.id,
+                "authorization_id": event.authorization_id,
+                "sequence": event.sequence,
+                "state": event.state,
+            }
+            return (
+                Phase1DisclosureLifecycleSnapshot.model_validate(
+                    {**fields, "fingerprint": canonical_fingerprint(fields)}
+                ),
+                expired_before_transition,
+            )
+
+        snapshot, expired_before_transition = self._coordinator.run_metadata(record)
+        if expired_before_transition:
+            raise Phase1ContractUnavailable("The disclosure authorization expired.")
+        return snapshot
+
+    def release_matching_wording(
+        self, request: Phase1WordingReleaseRequest
+    ) -> Phase1MatchingWordingRelease:
+        expected = request.authorization
+
+        def release(
+            session: Session,
+        ) -> tuple[Phase1MatchingWordingRelease | None, str]:
+            authorization = session.get(
+                Phase1FactDisclosureAuthorization, expected.authorization_id
+            )
+            if authorization is None:
+                raise Phase1ContractUnavailable("The disclosure authorization is unavailable.")
+            nonce_sha256 = sha256(request.nonce.encode("utf-8")).hexdigest()
+            if (
+                request.attempt_id != authorization.attempt_id
+                or expected.attempt_id != authorization.attempt_id
+                or expected.nonce_sha256 != authorization.nonce_sha256
+                or nonce_sha256 != authorization.nonce_sha256
+            ):
+                raise Phase1ContractUnavailable(
+                    "The disclosure attempt or nonce binding is invalid."
+                )
+            current_snapshot = self._authorization_snapshot(session, authorization)
+            if current_snapshot != expected:
+                raise Phase1ContractUnavailable(
+                    "The disclosure authorization changed or was replayed."
+                )
+            expires_at = authorization.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if current_snapshot.state == "expired":
+                return None, "expired"
+            if expires_at <= datetime.now(UTC):
+                sequence = session.scalar(
+                    select(Phase1FactDisclosureLifecycleEvent.sequence)
+                    .where(
+                        Phase1FactDisclosureLifecycleEvent.authorization_id
+                        == authorization.id
+                    )
+                    .order_by(Phase1FactDisclosureLifecycleEvent.sequence.desc())
+                )
+                event = Phase1FactDisclosureLifecycleEvent(
+                    id=str(uuid4()),
+                    authorization_id=authorization.id,
+                    logical_payload_digest=authorization.logical_payload_digest,
+                    sequence=int(sequence or 0) + 1,
+                    state="expired",
+                    reason_code="authorization_expired_before_release",
+                )
+                session.add(event)
+                session.add(
+                    AuditEvent(
+                        id=str(uuid4()),
+                        event_type="matching_disclosure_lifecycle",
+                        area="matching_disclosure",
+                        subject_id=authorization.id,
+                        summary="Matching disclosure expired before wording release.",
+                        before_json={"state": "authorized"},
+                        after_json={
+                            "state": "expired",
+                            "logical_payload_digest": authorization.logical_payload_digest,
+                        },
+                        sensitive=False,
+                        reason="authorization_expired_before_release",
+                        source_label="Phase I matching disclosure",
+                    )
+                )
+                session.flush()
+                self._coordinator.recovery_ledger.append(
+                    RecoveryEvent(
+                        event_id=event.id,
+                        event_type="matching_disclosure_lifecycle",
+                        payload={
+                            "authorization_id": authorization.id,
+                            "logical_payload_digest": authorization.logical_payload_digest,
+                            "sequence": event.sequence,
+                            "state": "expired",
+                            "reason_code": "authorization_expired_before_release",
+                        },
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                return None, "expired"
+            if current_snapshot.state != "authorized":
+                raise Phase1ContractUnavailable(
+                    "A consuming or terminal disclosure cannot be replayed."
+                )
+            preflight = session.get(
+                Phase1MatchingRetrievalPreflight, authorization.preflight_id
+            )
+            if preflight is None:
+                raise Phase1ContractUnavailable("The retrieval preflight is unavailable.")
+            manifest = Phase1MatchingRetrievalManifest.model_validate(preflight.manifest_json)
+            context = Phase1DisclosurePayloadContext.model_validate(
+                {**authorization.context_json, "nonce": request.nonce}
+            )
+            if (
+                self.disclosure_payload_digest(manifest, context)
+                != authorization.logical_payload_digest
+            ):
+                raise Phase1ContractUnavailable("The disclosure digest is invalid.")
+            current_manifest = self._snapshot_matching_retrieval_manifest(
+                manifest.query,
+                disclosure_budget_epoch=manifest.disclosure_budget_epoch,
+                disclosure_policy_generation=manifest.disclosure_policy_generation,
+            )
+            if current_manifest != manifest:
+                raise Phase1ContractUnavailable(
+                    "The authorized matching facts changed before disclosure."
+                )
+            released: list[Phase1MatchingReleasedChoice] = []
+            for choice in manifest.choices:
+                claim = session.get(Claim, choice.claim_id)
+                revision = session.get(ClaimRevision, choice.revision_id)
+                support = session.get(ClaimSupportAssertion, choice.support_assertion_id)
+                if (
+                    claim is None
+                    or revision is None
+                    or support is None
+                    or claim.active_revision_id != revision.id
+                    or revision.claim_id != claim.id
+                    or support.claim_id != claim.id
+                    or support.revision_id != revision.id
+                ):
+                    raise Phase1ContractUnavailable(
+                        "An authorized fact reference changed before disclosure."
+                    )
+                wording_hash = sha256(revision.display_value.encode("utf-8")).hexdigest()
+                if wording_hash != choice.safe_wording_sha256:
+                    raise Phase1ContractUnavailable(
+                        "An authorized wording hash changed before disclosure."
+                    )
+                released.append(
+                    Phase1MatchingReleasedChoice(
+                        canonical_key=claim.canonical_key,
+                        claim_id=claim.id,
+                        revision_id=revision.id,
+                        support_assertion_id=support.id,
+                        safe_wording=revision.display_value,
+                        safe_wording_sha256=wording_hash,
+                    )
+                )
+            fields = {
+                "authorization_id": authorization.id,
+                "logical_payload_digest": authorization.logical_payload_digest,
+                "manifest_fingerprint": manifest.fingerprint,
+                "choices": tuple(released),
+                "edges": manifest.edges,
+            }
+            wording_release = Phase1MatchingWordingRelease.model_validate(
+                {**fields, "fingerprint": canonical_fingerprint(fields)}
+            )
+            sequence = session.scalar(
+                select(Phase1FactDisclosureReleaseEvent.sequence)
+                .where(
+                    Phase1FactDisclosureReleaseEvent.authorization_id == authorization.id
+                )
+                .order_by(Phase1FactDisclosureReleaseEvent.sequence.desc())
+            )
+            release_event = Phase1FactDisclosureReleaseEvent(
+                id=str(uuid4()),
+                authorization_id=authorization.id,
+                logical_payload_digest=authorization.logical_payload_digest,
+                release_fingerprint=wording_release.fingerprint,
+                sequence=int(sequence or 0) + 1,
+            )
+            session.add(release_event)
+            session.add(
+                AuditEvent(
+                    id=str(uuid4()),
+                    event_type="matching_wording_released",
+                    area="matching_disclosure",
+                    subject_id=authorization.id,
+                    summary="Authorized matching wording was released.",
+                    before_json=None,
+                    after_json={
+                        "logical_payload_digest": authorization.logical_payload_digest,
+                        "release_fingerprint": wording_release.fingerprint,
+                        "sequence": release_event.sequence,
+                        "choice_count": len(released),
+                    },
+                    sensitive=False,
+                    reason="authorized_local_manual_release",
+                    source_label="Phase I matching disclosure",
+                )
+            )
+            session.flush()
+            self._coordinator.recovery_ledger.append(
+                RecoveryEvent(
+                    event_id=release_event.id,
+                    event_type="matching_wording_released",
+                    payload={
+                        "authorization_id": authorization.id,
+                        "logical_payload_digest": authorization.logical_payload_digest,
+                        "release_fingerprint": wording_release.fingerprint,
+                        "sequence": release_event.sequence,
+                        "choice_count": len(released),
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
+            return wording_release, ""
+
+        result, failure = self._coordinator.run_metadata(release)
+        if result is None:
+            raise Phase1ContractUnavailable(
+                f"The disclosure authorization {failure}."
+            )
+        return result
+
+    def start_new_matching_disclosure_epoch(
+        self, request: Phase1DisclosureEpochRequest
+    ) -> Phase1DisclosureEpochSnapshot:
+        if request.confirmation != "START NEW MATCHING DISCLOSURE EPOCH":
+            raise Phase1ContractUnavailable(
+                "The exact matching disclosure epoch confirmation is required."
+            )
+
+        def start(session: Session) -> Phase1DisclosureEpochSnapshot:
+            current = self._current_disclosure_epoch(session)
+            epoch = Phase1MatchingDisclosureEpoch(
+                id=str(uuid4()),
+                epoch_number=current.epoch_number + 1,
+                policy_generation=current.policy_generation + 1,
+                reason=request.reason,
+                confirmation=request.confirmation,
+            )
+            session.add(epoch)
+            audit_id = str(uuid4())
+            session.add(
+                AuditEvent(
+                    id=audit_id,
+                    event_type="matching_disclosure_epoch_started",
+                    area="matching_disclosure",
+                    subject_id=epoch.id,
+                    summary=f"Matching disclosure epoch {epoch.epoch_number} started.",
+                    before_json={
+                        "epoch": current.epoch_number,
+                        "policy_generation": current.policy_generation,
+                    },
+                    after_json={
+                        "epoch": epoch.epoch_number,
+                        "policy_generation": epoch.policy_generation,
+                    },
+                    sensitive=False,
+                    reason=request.reason,
+                    source_label="Phase I matching disclosure",
+                )
+            )
+            session.flush()
+            self._coordinator.recovery_ledger.append(
+                RecoveryEvent(
+                    event_id=audit_id,
+                    event_type="matching_disclosure_epoch_started",
+                    payload={
+                        "epoch_id": epoch.id,
+                        "epoch": epoch.epoch_number,
+                        "policy_generation": epoch.policy_generation,
+                        "reason": request.reason,
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
+            fields = {
+                "epoch_number": epoch.epoch_number,
+                "policy_generation": epoch.policy_generation,
+            }
+            return Phase1DisclosureEpochSnapshot(
+                **fields, fingerprint=canonical_fingerprint(fields)
+            )
+
+        return self._coordinator.run_metadata(start)
 
     def request_manual_content_review(
         self, request: Phase1ManualContentReviewRequest

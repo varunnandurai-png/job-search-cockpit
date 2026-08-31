@@ -9,13 +9,21 @@ from sqlalchemy.orm import Session
 
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
+    Phase1DisclosureAuthorizationRequest,
+    Phase1DisclosureEpochRequest,
+    Phase1DisclosureEpochSnapshot,
+    Phase1DisclosureLifecycleRequest,
+    Phase1DisclosureLifecycleSnapshot,
+    Phase1FactDisclosureAuthorizationSnapshot,
     Phase1ManualContentReviewReceipt,
     Phase1ManualContentReviewRequest,
     Phase1MatchingFactSetSnapshot,
     Phase1MatchingRequirementQuery,
     Phase1MatchingRetrievalManifest,
+    Phase1MatchingWordingRelease,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
+    Phase1WordingReleaseRequest,
 )
 
 if TYPE_CHECKING:
@@ -128,6 +136,22 @@ class Phase1MatchingPort(Protocol):
     def revalidate_matching_retrieval_manifest(
         self, expected: Phase1MatchingRetrievalManifest
     ) -> Phase1MatchingRetrievalManifest: ...
+
+    def authorize_matching_disclosure(
+        self, request: Phase1DisclosureAuthorizationRequest
+    ) -> Phase1FactDisclosureAuthorizationSnapshot: ...
+
+    def release_matching_wording(
+        self, request: Phase1WordingReleaseRequest
+    ) -> Phase1MatchingWordingRelease: ...
+
+    def record_disclosure_lifecycle(
+        self, request: Phase1DisclosureLifecycleRequest
+    ) -> Phase1DisclosureLifecycleSnapshot: ...
+
+    def start_new_matching_disclosure_epoch(
+        self, request: Phase1DisclosureEpochRequest
+    ) -> Phase1DisclosureEpochSnapshot: ...
 
     def request_manual_content_review(
         self, request: Phase1ManualContentReviewRequest
