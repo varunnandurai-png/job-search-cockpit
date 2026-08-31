@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
 from hashlib import sha256
@@ -180,14 +181,19 @@ class AssessmentPublicationService:
         self._authority_service = authority_service
         self._coordinator = coordinator
 
+    def capture_authority(self) -> AssessmentAuthoritySnapshot:
+        return self._authority_service.capture_for_assessment()
+
     def publish(
         self,
         command: AssessmentPublicationCommand,
         *,
         expected_fact_set: Phase1MatchingFactSetSnapshot | None = None,
         expected_manifest: Phase1MatchingRetrievalManifest | None = None,
+        expected_authority: AssessmentAuthoritySnapshot | None = None,
+        publication_guard: Callable[[Session], None] | None = None,
     ) -> str:
-        expected = self._authority_service.capture_for_assessment()
+        expected = expected_authority or self._authority_service.capture_for_assessment()
         self._authority_service.revalidate_before_publication(expected)
         command.validate()
         self._validate_fact_set(command, expected_fact_set)
@@ -198,6 +204,8 @@ class AssessmentPublicationService:
             command.validate()
             self._validate_fact_set(command, expected_fact_set)
             self._validate_manifest(command, expected_manifest)
+            if publication_guard is not None:
+                publication_guard(session)
             if session.get(Phase2JobRevision, command.result.job_revision_id) is None:
                 raise AssessmentUnavailable("Assessment job revision is unavailable.")
             fields = current.persistence_fields()

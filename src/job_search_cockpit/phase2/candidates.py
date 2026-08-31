@@ -30,6 +30,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
 )
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.assessment import (
+    AssessmentAuthoritySnapshot,
     AssessmentPublicationCommand,
     AssessmentPublicationService,
     ScoreRequirement,
@@ -121,6 +122,7 @@ class LocalManualMappingLaunch:
     manifest_fingerprint: str
     manifest: Phase1MatchingRetrievalManifest
     phase1_authorization_id: str
+    authority: AssessmentAuthoritySnapshot
     logical_payload_digest: str
     expires_at: datetime
 
@@ -179,6 +181,7 @@ class CandidateWorkflowService:
     ) -> LocalManualMappingLaunch:
         inputs = self._phase1_port.activation_inputs()
         view = self._activation_service.revalidate_before(Phase2Action.SCORING)
+        authority = self._publication_service.capture_authority()
         if selected_location_path not in inputs.profile.payload.locations:
             raise CandidateWorkflowUnavailable("The selected location path is not eligible.")
         with self._coordinator._session_factory() as session:
@@ -300,6 +303,7 @@ class CandidateWorkflowService:
             manifest.fingerprint,
             manifest,
             authorization.authorization_id,
+            authority,
             digest,
             expires_at,
         )
@@ -450,7 +454,10 @@ class CandidateWorkflowService:
                 ("local_manual_mapping",),
             )
             assessment_id = self._publication_service.publish(
-                command, expected_manifest=launch.manifest
+                command,
+                expected_manifest=launch.manifest,
+                expected_authority=launch.authority,
+                publication_guard=lambda session: _publication_guard(session, launch),
             )
         except Exception:
             self._terminal(launch.attempt_id, "failed", "publication_failed")
@@ -761,6 +768,16 @@ def _attempt_state(session: Session, attempt_id: str) -> str | None:
         .where(Phase2LocalManualMappingAttemptEvent.attempt_id == attempt_id)
         .order_by(Phase2LocalManualMappingAttemptEvent.sequence.desc())
     )
+
+
+def _publication_guard(session: Session, launch: LocalManualMappingLaunch) -> None:
+    revision = session.get(Phase2JobRevision, launch.job_revision_id)
+    if revision is None or not _is_current(session, revision):
+        raise CandidateWorkflowUnavailable("The job revision is not current.")
+    if launch.selected_location_path not in {str(item) for item in revision.locations_json}:
+        raise CandidateWorkflowUnavailable("The selected location does not belong to this job.")
+    if extract_public_requirements(revision) != launch.requirements:
+        raise CandidateWorkflowUnavailable("The job requirements changed before publication.")
 
 
 def _requirement_payload(item: Requirement) -> dict[str, object]:
