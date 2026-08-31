@@ -44,6 +44,7 @@ from job_search_cockpit.phase2.assessment_types import (
     GateResult,
     LocationEligibilityPath,
     MatchAssessmentResult,
+    MatchScoreComponents,
     Requirement,
     RequirementEvidenceMapping,
     RequirementKind,
@@ -85,6 +86,17 @@ _TerminalDisclosureState = Literal[
 ]
 _TERMINAL_DISCLOSURE_STATES = frozenset(
     {"validated_response", "expired", "denied", "failed", "indeterminate", "cancelled"}
+)
+_COMPONENT_NAMES = frozenset(
+    {
+        ScoringComponent.ROLE.value,
+        ScoringComponent.DOMAIN.value,
+        ScoringComponent.RESPONSIBILITY.value,
+        ScoringComponent.TECHNICAL.value,
+        ScoringComponent.OUTCOME.value,
+        ScoringComponent.SENIORITY.value,
+        ScoringComponent.EVIDENCE.value,
+    }
 )
 _RELATION_REASONS = {
     EvidenceRelation.DIRECT: frozenset(
@@ -387,13 +399,24 @@ class CandidateWorkflowService:
         assessment_id = _assessment_id(launch)
         self._record_publication_intent(launch, assessment_id)
         try:
-            self._phase1_port.record_disclosure_lifecycle(
+            lifecycle = self._phase1_port.record_disclosure_lifecycle(
                 Phase1DisclosureLifecycleRequest(
                     authorization_id=launch.phase1_authorization_id,
                     logical_payload_digest=launch.logical_payload_digest,
                     state="consuming",
                 )
             )
+        except Exception:
+            recovered = self._settle_failed_publication(launch)
+            if recovered is not None:
+                return recovered
+            raise
+        if lifecycle.state != "consuming":
+            self._settle_non_consuming_phase1(launch, lifecycle.state)
+            raise CandidateWorkflowUnavailable(
+                "The Phase I disclosure did not enter consuming state."
+            )
+        try:
             scored = tuple(
                 ScoreRequirement(
                     item.requirement_id,
@@ -555,6 +578,23 @@ class CandidateWorkflowService:
         terminal = self._record_phase1_terminal(launch, terminal, "publication_failed")
         self._terminal(launch.attempt_id, terminal, "publication_failed")
         return None
+
+    def _settle_non_consuming_phase1(self, launch: LocalManualMappingLaunch, state: str) -> None:
+        if state in _TERMINAL_DISCLOSURE_STATES - {"validated_response"}:
+            self._terminal(launch.attempt_id, state, "phase1_consuming_rejected")
+            return
+        desired: _TerminalDisclosureState = (
+            "expired" if self._now() >= launch.expires_at else "indeterminate"
+        )
+        if state not in _TERMINAL_DISCLOSURE_STATES:
+            desired = self._record_phase1_terminal(
+                launch, desired, "phase1_consuming_rejected"
+            )
+        self._terminal(
+            launch.attempt_id,
+            "indeterminate" if desired == "validated_response" else desired,
+            "phase1_consuming_rejected",
+        )
 
     def _record_phase1_terminal(
         self, launch: LocalManualMappingLaunch, state: _TerminalDisclosureState, reason: str
@@ -938,19 +978,36 @@ def _is_publication_witness(
         for choice in launch.manifest.choices
         if choice.claim_id == edge.claim_id
     }
+    validated_mappings: list[RequirementEvidenceMapping] = []
     for mapping in mappings:
         requirement = expected[mapping.requirement_id]
+        if any(
+            getattr(mapping, field) != value
+            for field, value in launch.authority.persistence_fields().items()
+        ):
+            return False
+        try:
+            relation = EvidenceRelation(mapping.relation)
+            validated_mapping = RequirementEvidenceMapping(
+                mapping.requirement_id,
+                relation,
+                mapping.reason_code,
+                mapping.claim_id,
+                mapping.fact_revision_id,
+                mapping.support_assertion_id,
+            )
+        except ValueError:
+            return False
         if (
             mapping.requirement_kind != requirement.kind.value
             or mapping.component != requirement.component.value
             or mapping.source_span_id != requirement.source_span_id
             or mapping.source_start_offset != requirement.start_offset
             or mapping.source_end_offset != requirement.end_offset
-            or mapping.reason_code not in _RELATION_REASONS[EvidenceRelation(mapping.relation)]
         ):
             return False
         if (
-            mapping.relation != EvidenceRelation.NONE.value
+            relation is not EvidenceRelation.NONE
             and (
                 mapping.requirement_id,
                 mapping.claim_id,
@@ -960,14 +1017,93 @@ def _is_publication_witness(
             not in allowed
         ):
             return False
-    return (
-        session.scalar(
-            select(func.count(Phase2MatchComponent.id)).where(
+        validated_mappings.append(validated_mapping)
+    try:
+        scored = tuple(
+            ScoreRequirement(
+                requirement.requirement_id,
+                requirement.kind,
+                requirement.component,
+                next(
+                    mapping
+                    for mapping in validated_mappings
+                    if mapping.requirement_id == requirement.requirement_id
+                ),
+            )
+            for requirement in launch.requirements
+        )
+        expected_components = _component_scores(calculate_match_score(scored))
+    except ValueError:
+        return False
+    unsupported = any(
+        requirement.kind is RequirementKind.REQUIRED
+        and next(
+            mapping
+            for mapping in validated_mappings
+            if mapping.requirement_id == requirement.requirement_id
+        ).relation
+        is EvidenceRelation.NONE
+        for requirement in launch.requirements
+    )
+    floors = (
+        expected_components[ScoringComponent.ROLE.value] >= 10
+        and expected_components[ScoringComponent.RESPONSIBILITY.value] >= 10
+    )
+    total_score = sum(expected_components.values())
+    worthwhile = total_score >= 70
+    if (
+        assessment.total_score != total_score
+        or assessment.qualified_band
+        != resolve_qualified_match_band(
+            raw_score=total_score,
+            meaningful_role_and_responsibility=floors,
+            worthwhile_structure=worthwhile,
+            unsupported_required=unsupported,
+            all_critical_floors_pass=floors,
+        ).value
+        or assessment.critical_floors_pass != floors
+        or assessment.meaningful_role_and_responsibility != floors
+        or assessment.worthwhile_structure != worthwhile
+        or assessment.unsupported_required != unsupported
+        or assessment.confidence
+        != resolve_confidence(("required_clause_uncertain",) if unsupported else ()).value
+    ):
+        return False
+    component_rows = tuple(
+        session.scalars(
+            select(Phase2MatchComponent).where(
                 Phase2MatchComponent.match_assessment_id == assessment.id
             )
         )
-        == 7
     )
+    component_names = tuple(row.component for row in component_rows)
+    if (
+        len(component_rows) != len(_COMPONENT_NAMES)
+        or len(set(component_names)) != len(component_names)
+        or set(component_names) != _COMPONENT_NAMES
+    ):
+        return False
+    for row in component_rows:
+        if row.score != expected_components[row.component]:
+            return False
+        if any(
+            getattr(row, field) != value
+            for field, value in launch.authority.persistence_fields().items()
+        ):
+            return False
+    return True
+
+
+def _component_scores(components: MatchScoreComponents) -> dict[str, int]:
+    return {
+        ScoringComponent.ROLE.value: components.role,
+        ScoringComponent.DOMAIN.value: components.domain,
+        ScoringComponent.RESPONSIBILITY.value: components.responsibility,
+        ScoringComponent.TECHNICAL.value: components.technical,
+        ScoringComponent.OUTCOME.value: components.outcome,
+        ScoringComponent.SENIORITY.value: components.seniority,
+        ScoringComponent.EVIDENCE.value: components.evidence,
+    }
 
 
 def _publication_guard(

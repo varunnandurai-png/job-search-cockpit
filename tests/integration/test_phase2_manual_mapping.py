@@ -66,10 +66,12 @@ class _FaultInjectingPhase1:
         manifest: Phase1MatchingRetrievalManifest,
         failure: Literal["before_consuming", "after_consuming", "none"] = "none",
         expire_on_terminal: bool = False,
+        consuming_receipt_state: Literal["consuming", "expired"] = "consuming",
     ) -> None:
         self.manifest = manifest
         self.failure = failure
         self.expire_on_terminal = expire_on_terminal
+        self.consuming_receipt_state = consuming_receipt_state
         self.state = "authorized"
         self.lifecycle: list[str] = []
         self.manifest_calls = 0
@@ -91,11 +93,11 @@ class _FaultInjectingPhase1:
             if self.failure == "before_consuming":
                 raise RuntimeError("injected failure before Phase I consuming")
             assert self.state == "authorized"
-            self.state = "consuming"
-            self.lifecycle.append(request.state)
+            self.state = self.consuming_receipt_state
+            self.lifecycle.append(self.consuming_receipt_state)
             if self.failure == "after_consuming":
                 raise KeyboardInterrupt("injected interruption after Phase I consuming")
-            return SimpleNamespace(state=request.state)
+            return SimpleNamespace(state=self.consuming_receipt_state)
         if self.state not in {"authorized", "consuming"}:
             return SimpleNamespace(state=self.state)
         if self.expire_on_terminal:
@@ -121,12 +123,16 @@ class _FaultInjectingPublication:
         fail_after_assessment: bool = False,
         insert_stale_revision: bool = False,
         corrupt_witness: bool = False,
+        component_witness_corruption: Literal["none", "duplicate_name", "wrong_score"] = "none",
+        none_mapping_identifiers: bool = False,
     ) -> None:
         self.coordinator = coordinator
         self.interrupt_after_assessment = interrupt_after_assessment
         self.fail_after_assessment = fail_after_assessment
         self.insert_stale_revision = insert_stale_revision
         self.corrupt_witness = corrupt_witness
+        self.component_witness_corruption = component_witness_corruption
+        self.none_mapping_identifiers = none_mapping_identifiers
         self.calls = 0
         self.expected_authority: object | None = None
 
@@ -188,12 +194,24 @@ class _FaultInjectingPublication:
                 ("seniority", result.components.seniority),
                 ("evidence", result.components.evidence),
             ):
+                stored_component = (
+                    "role"
+                    if self.component_witness_corruption == "duplicate_name"
+                    and component == "evidence"
+                    else component
+                )
+                stored_score = (
+                    score + 1
+                    if self.component_witness_corruption == "wrong_score"
+                    and component == "evidence"
+                    else score
+                )
                 session.add(  # type: ignore[union-attr]
                     Phase2MatchComponent(
                         id=f"{result.assessment_id}-{component}",
                         match_assessment_id=result.assessment_id,
-                        component=component,
-                        score=score,
+                        component=stored_component,
+                        score=stored_score,
                         **_FENCE,
                     )
                 )
@@ -210,9 +228,24 @@ class _FaultInjectingPublication:
                         source_span_id=requirement.source_span_id,
                         source_start_offset=requirement.start_offset,
                         source_end_offset=requirement.end_offset,
-                        claim_id=mapping.claim_id,
-                        fact_revision_id=mapping.revision_id,
-                        support_assertion_id=mapping.support_assertion_id,
+                        claim_id=(
+                            "claim-1"
+                            if self.none_mapping_identifiers
+                            and mapping.relation is EvidenceRelation.NONE
+                            else mapping.claim_id
+                        ),
+                        fact_revision_id=(
+                            "fact-revision-1"
+                            if self.none_mapping_identifiers
+                            and mapping.relation is EvidenceRelation.NONE
+                            else mapping.revision_id
+                        ),
+                        support_assertion_id=(
+                            "support-1"
+                            if self.none_mapping_identifiers
+                            and mapping.relation is EvidenceRelation.NONE
+                            else mapping.support_assertion_id
+                        ),
                         relation=mapping.relation.value,
                         reason_code=mapping.reason_code,
                         **_FENCE,
@@ -382,10 +415,14 @@ def _recovery_service(
     *,
     phase1_failure: Literal["before_consuming", "after_consuming", "none"] = "none",
     phase1_expires_on_terminal: bool = False,
+    phase1_consuming_receipt_state: Literal["consuming", "expired"] = "consuming",
     interrupt_after_assessment: bool = False,
     fail_after_assessment: bool = False,
     insert_stale_revision: bool = False,
     corrupt_witness: bool = False,
+    component_witness_corruption: Literal["none", "duplicate_name", "wrong_score"] = "none",
+    none_mapping_identifiers: bool = False,
+    selection_relation: EvidenceRelation = EvidenceRelation.DIRECT,
 ) -> tuple[
     CandidateWorkflowService,
     _FaultInjectingPhase1,
@@ -404,7 +441,10 @@ def _recovery_service(
     assert len(requirements) == 1
     manifest = _manifest(requirements[0])
     phase1 = _FaultInjectingPhase1(
-        manifest, phase1_failure, expire_on_terminal=phase1_expires_on_terminal
+        manifest,
+        phase1_failure,
+        expire_on_terminal=phase1_expires_on_terminal,
+        consuming_receipt_state=phase1_consuming_receipt_state,
     )
     publication = _FaultInjectingPublication(
         coordinator,
@@ -412,6 +452,8 @@ def _recovery_service(
         fail_after_assessment=fail_after_assessment,
         insert_stale_revision=insert_stale_revision,
         corrupt_witness=corrupt_witness,
+        component_witness_corruption=component_witness_corruption,
+        none_mapping_identifiers=none_mapping_identifiers,
     )
     service = CandidateWorkflowService(phase1, object(), coordinator, publication, now=lambda: _NOW)  # type: ignore[arg-type]
     launch = LocalManualMappingLaunch(
@@ -441,16 +483,25 @@ def _recovery_service(
         _phase1_inputs(),
         Phase2ActivationView("active", "", 1, 0, 0, "receipt-1", 1),
     )
-    selections = (
-        LocalManualMappingSelection(
-            requirement_id=requirements[0].requirement_id,
-            relation=EvidenceRelation.DIRECT,
-            reason_code="direct/exact_capability_performed",
-            claim_id="claim-1",
-            revision_id="fact-revision-1",
-            support_assertion_id="support-1",
-        ),
-    )
+    if selection_relation is EvidenceRelation.NONE:
+        selections = (
+            LocalManualMappingSelection(
+                requirement_id=requirements[0].requirement_id,
+                relation=EvidenceRelation.NONE,
+                reason_code="none/no_approved_evidence_found",
+            ),
+        )
+    else:
+        selections = (
+            LocalManualMappingSelection(
+                requirement_id=requirements[0].requirement_id,
+                relation=EvidenceRelation.DIRECT,
+                reason_code="direct/exact_capability_performed",
+                claim_id="claim-1",
+                revision_id="fact-revision-1",
+                support_assertion_id="support-1",
+            ),
+        )
     return service, phase1, publication, launch, selections, coordinator, lock
 
 
@@ -508,6 +559,27 @@ def test_phase1_expiry_between_recovery_checks_commits_the_same_expired_terminal
         assert phase1.lifecycle == ["expired"]
         with pytest.raises(CandidateWorkflowUnavailable, match="cannot be replayed"):
             service.publish_local_manual_mapping(launch, selections)
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+def test_phase1_consuming_receipt_expiry_blocks_publication_and_seals_phase2(
+    phase2_settings,
+) -> None:
+    service, phase1, publication, launch, selections, coordinator, lock = _recovery_service(
+        phase2_settings,
+        phase1_consuming_receipt_state="expired",
+    )
+    try:
+        with pytest.raises(CandidateWorkflowUnavailable, match="did not enter consuming"):
+            service.publish_local_manual_mapping(launch, selections)
+
+        assert _attempt_state(coordinator) == "expired"
+        assert phase1.lifecycle == ["expired"]
+        assert publication.calls == 0
+        with coordinator._session_factory() as session:
+            assert session.scalar(select(Phase2MatchAssessment)) is None
     finally:
         coordinator.dispose()
         lock.release()
@@ -616,6 +688,51 @@ def test_recovery_rejects_an_assessment_witness_with_a_wrong_manifest_binding(
 ) -> None:
     service, phase1, _publication, launch, selections, coordinator, lock = _recovery_service(
         phase2_settings, interrupt_after_assessment=True, corrupt_witness=True
+    )
+    try:
+        with pytest.raises(KeyboardInterrupt, match="after Phase II assessment publication"):
+            service.publish_local_manual_mapping(launch, selections)
+
+        with pytest.raises(CandidateWorkflowUnavailable, match="witness is inconsistent"):
+            service.publish_local_manual_mapping(launch, selections)
+        assert _attempt_state(coordinator) == "authorized"
+        assert phase1.lifecycle == ["consuming"]
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+@pytest.mark.parametrize("component_witness_corruption", ("duplicate_name", "wrong_score"))
+def test_recovery_rejects_an_assessment_witness_with_malformed_components(
+    phase2_settings,
+    component_witness_corruption: Literal["duplicate_name", "wrong_score"],
+) -> None:
+    service, phase1, _publication, launch, selections, coordinator, lock = _recovery_service(
+        phase2_settings,
+        interrupt_after_assessment=True,
+        component_witness_corruption=component_witness_corruption,
+    )
+    try:
+        with pytest.raises(KeyboardInterrupt, match="after Phase II assessment publication"):
+            service.publish_local_manual_mapping(launch, selections)
+
+        with pytest.raises(CandidateWorkflowUnavailable, match="witness is inconsistent"):
+            service.publish_local_manual_mapping(launch, selections)
+        assert _attempt_state(coordinator) == "authorized"
+        assert phase1.lifecycle == ["consuming"]
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+def test_recovery_rejects_an_assessment_witness_with_none_mapping_fact_identifiers(
+    phase2_settings,
+) -> None:
+    service, phase1, _publication, launch, selections, coordinator, lock = _recovery_service(
+        phase2_settings,
+        interrupt_after_assessment=True,
+        none_mapping_identifiers=True,
+        selection_relation=EvidenceRelation.NONE,
     )
     try:
         with pytest.raises(KeyboardInterrupt, match="after Phase II assessment publication"):
