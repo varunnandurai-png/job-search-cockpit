@@ -70,6 +70,20 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("attempt_id", "sequence"),
     )
+    for table in (
+        "phase2_local_manual_mapping_attempts",
+        "phase2_local_manual_mapping_attempt_events",
+    ):
+        for operation in ("update", "delete"):
+            op.execute(
+                f"""
+                CREATE TRIGGER IF NOT EXISTS prevent_{table}_{operation}
+                BEFORE {operation.upper()} ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{table} is append-only');
+                END
+                """
+            )
 
 
 def downgrade() -> None:

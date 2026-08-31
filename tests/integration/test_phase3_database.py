@@ -59,7 +59,7 @@ def test_phase3_migration_head_and_append_only_triggers_are_effective(
 
     with sqlite3.connect(phase2_settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0017_drive_reserved_file_ids",
+            "0018_local_manual_mapping_attempts",
         )
         connection.execute(
             """
@@ -96,15 +96,12 @@ def test_phase3_artifacts_enforce_one_pair_per_review_attempt(
     with sqlite3.connect(phase2_settings.database_path) as connection:
         unique_indexes = [
             row[1]
-            for row in connection.execute(
-                "PRAGMA index_list(phase2_final_resume_artifacts)"
-            )
+            for row in connection.execute("PRAGMA index_list(phase2_final_resume_artifacts)")
             if row[2]
         ]
         unique_column_sets = {
             tuple(
-                index_row[2]
-                for index_row in connection.execute(f"PRAGMA index_info({index_name})")
+                index_row[2] for index_row in connection.execute(f"PRAGMA index_info({index_name})")
             )
             for index_name in unique_indexes
         }

@@ -11,6 +11,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
     Phase1MatchingFactSetSnapshot,
     Phase1MatchingRequirementQuery,
+    Phase1MatchingRetrievalManifest,
     Phase1ResumeFactProjectionRequest,
 )
 from job_search_cockpit.phase2.activation import Phase2ActivationService
@@ -159,6 +160,14 @@ class AssessmentAuthorityService:
         except (Phase1ContractUnavailable, ValueError) as error:
             raise AssessmentUnavailable("Assessment matching fact set changed.") from error
 
+    def revalidate_matching_manifest(
+        self, expected: Phase1MatchingRetrievalManifest
+    ) -> Phase1MatchingRetrievalManifest:
+        try:
+            return self._phase1_port.revalidate_matching_retrieval_manifest(expected)
+        except (Phase1ContractUnavailable, ValueError) as error:
+            raise AssessmentUnavailable("Assessment matching fact set changed.") from error
+
 
 class AssessmentPublicationService:
     """Persists a fully validated local assessment only behind a fresh authority fence."""
@@ -176,16 +185,19 @@ class AssessmentPublicationService:
         command: AssessmentPublicationCommand,
         *,
         expected_fact_set: Phase1MatchingFactSetSnapshot | None = None,
+        expected_manifest: Phase1MatchingRetrievalManifest | None = None,
     ) -> str:
         expected = self._authority_service.capture_for_assessment()
         self._authority_service.revalidate_before_publication(expected)
         command.validate()
         self._validate_fact_set(command, expected_fact_set)
+        self._validate_manifest(command, expected_manifest)
 
         def insert(session: Session) -> str:
             current = self._authority_service.revalidate_before_publication(expected)
             command.validate()
             self._validate_fact_set(command, expected_fact_set)
+            self._validate_manifest(command, expected_manifest)
             if session.get(Phase2JobRevision, command.result.job_revision_id) is None:
                 raise AssessmentUnavailable("Assessment job revision is unavailable.")
             fields = current.persistence_fields()
@@ -314,6 +326,35 @@ class AssessmentPublicationService:
                 mapping.revision_id,
                 mapping.support_assertion_id,
             ) not in allowed:
+                raise AssessmentUnavailable("Assessment mapping is outside the approved fact set.")
+
+    def _validate_manifest(
+        self,
+        command: AssessmentPublicationCommand,
+        expected_manifest: Phase1MatchingRetrievalManifest | None,
+    ) -> None:
+        if expected_manifest is None:
+            return
+        current = self._authority_service.revalidate_matching_manifest(expected_manifest)
+        if (
+            current != expected_manifest
+            or command.fact_set_fingerprint != expected_manifest.fingerprint
+        ):
+            raise AssessmentUnavailable("Assessment matching fact set changed.")
+        allowed = {
+            (choice.claim_id, choice.revision_id, choice.support_assertion_id)
+            for choice in expected_manifest.choices
+        }
+        for mapping in command.mappings:
+            if (
+                mapping.relation is not EvidenceRelation.NONE
+                and (
+                    mapping.claim_id,
+                    mapping.revision_id,
+                    mapping.support_assertion_id,
+                )
+                not in allowed
+            ):
                 raise AssessmentUnavailable("Assessment mapping is outside the approved fact set.")
 
 

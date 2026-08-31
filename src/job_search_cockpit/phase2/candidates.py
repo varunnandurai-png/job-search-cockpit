@@ -20,9 +20,11 @@ from sqlalchemy.orm import Session
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
     Phase1DisclosureAuthorizationRequest,
+    Phase1DisclosureLifecycleRequest,
     Phase1DisclosurePayloadContext,
     Phase1MatchingRequirementPredicate,
     Phase1MatchingRequirementQuery,
+    Phase1MatchingRetrievalManifest,
     Phase1WordingReleaseRequest,
     canonical_fingerprint,
 )
@@ -117,6 +119,8 @@ class LocalManualMappingLaunch:
     # This is display-only and is intentionally never persisted by Phase II.
     choices: tuple[tuple[str, str, str, str, str], ...]
     manifest_fingerprint: str
+    manifest: Phase1MatchingRetrievalManifest
+    phase1_authorization_id: str
     logical_payload_digest: str
     expires_at: datetime
 
@@ -294,6 +298,8 @@ class CandidateWorkflowService:
                 for item in release.choices
             ),
             manifest.fingerprint,
+            manifest,
+            authorization.authorization_id,
             digest,
             expires_at,
         )
@@ -304,6 +310,14 @@ class CandidateWorkflowService:
         """Atomically consume a locally authorized response before publication."""
         if self._now() >= launch.expires_at:
             self._terminal(launch.attempt_id, "expired", "authorization_expired")
+            self._phase1_port.record_disclosure_lifecycle(
+                Phase1DisclosureLifecycleRequest(
+                    authorization_id=launch.phase1_authorization_id,
+                    logical_payload_digest=launch.logical_payload_digest,
+                    state="expired",
+                    reason_code="authorization_expired",
+                )
+            )
             raise CandidateWorkflowUnavailable("The local mapping authorization expired.")
         mappings = tuple(item.mapping() for item in selections)
         requirements = {item.requirement_id: item for item in launch.requirements}
@@ -326,6 +340,17 @@ class CandidateWorkflowService:
                 raise CandidateWorkflowUnavailable(
                     "The selected evidence choice is not authorized for this job."
                 )
+        with self._coordinator._session_factory() as session:
+            revision = session.get(Phase2JobRevision, launch.job_revision_id)
+            if revision is None or not _is_current(session, revision):
+                raise CandidateWorkflowUnavailable("The job revision is not current.")
+            if launch.selected_location_path not in {str(item) for item in revision.locations_json}:
+                raise CandidateWorkflowUnavailable(
+                    "The selected location does not belong to this job."
+                )
+            current_requirements = extract_public_requirements(revision)
+        if current_requirements != launch.requirements:
+            raise CandidateWorkflowUnavailable("The job requirements changed before publication.")
         coverage = canonical_fingerprint(
             [_requirement_payload(item) for item in launch.requirements]
         )
@@ -337,6 +362,13 @@ class CandidateWorkflowService:
             or self._phase1_port.revalidate_matching_retrieval_manifest(manifest) != manifest
         ):
             raise CandidateWorkflowUnavailable("The approved fact set changed before publication.")
+        self._phase1_port.record_disclosure_lifecycle(
+            Phase1DisclosureLifecycleRequest(
+                authorization_id=launch.phase1_authorization_id,
+                logical_payload_digest=launch.logical_payload_digest,
+                state="consuming",
+            )
+        )
         self._consume(launch.attempt_id, launch.logical_payload_digest)
         try:
             scored = tuple(
@@ -395,15 +427,32 @@ class CandidateWorkflowService:
                 ),
                 _RUBRIC_VERSION,
                 canonical_fingerprint([_requirement_payload(item) for item in launch.requirements]),
-                launch.logical_payload_digest,
+                launch.manifest.fingerprint,
                 "stable",
                 ("local_manual_mapping",),
             )
-            assessment_id = self._publication_service.publish(command)
+            assessment_id = self._publication_service.publish(
+                command, expected_manifest=launch.manifest
+            )
         except Exception:
             self._terminal(launch.attempt_id, "failed", "publication_failed")
+            self._phase1_port.record_disclosure_lifecycle(
+                Phase1DisclosureLifecycleRequest(
+                    authorization_id=launch.phase1_authorization_id,
+                    logical_payload_digest=launch.logical_payload_digest,
+                    state="failed",
+                    reason_code="publication_failed",
+                )
+            )
             raise
         self._terminal(launch.attempt_id, "validated_response", "")
+        self._phase1_port.record_disclosure_lifecycle(
+            Phase1DisclosureLifecycleRequest(
+                authorization_id=launch.phase1_authorization_id,
+                logical_payload_digest=launch.logical_payload_digest,
+                state="validated_response",
+            )
+        )
         return assessment_id
 
     def _record_attempt(
@@ -482,16 +531,16 @@ class CandidateWorkflowService:
                     Phase2LocalManualMappingAttempt.attempt_id == attempt_id
                 )
             )
+            state = _attempt_state(session, record.id) if record is not None else None
             if (
                 record is None
-                or record.state != "authorized"
+                or state != "authorized"
                 or record.logical_payload_digest != digest
                 or record.expires_at <= self._now()
             ):
                 raise CandidateWorkflowUnavailable(
                     "The local mapping authorization cannot be replayed."
                 )
-            record.state = "consuming"
             session.add(
                 Phase2LocalManualMappingAttemptEvent(
                     id=str(uuid4()),
@@ -511,9 +560,11 @@ class CandidateWorkflowService:
                     Phase2LocalManualMappingAttempt.attempt_id == attempt_id
                 )
             )
-            if record is None or record.state not in {"authorized", "consuming"}:
+            if record is None or _attempt_state(session, record.id) not in {
+                "authorized",
+                "consuming",
+            }:
                 return
-            record.state = state
             sequence = (
                 int(
                     session.scalar(
@@ -684,6 +735,14 @@ def _is_current(session: Session, revision: Phase2JobRevision) -> bool:
         .order_by(Phase2JobRevision.created_at.desc(), Phase2JobRevision.id.desc())
     )
     return current == revision.id
+
+
+def _attempt_state(session: Session, attempt_id: str) -> str | None:
+    return session.scalar(
+        select(Phase2LocalManualMappingAttemptEvent.state)
+        .where(Phase2LocalManualMappingAttemptEvent.attempt_id == attempt_id)
+        .order_by(Phase2LocalManualMappingAttemptEvent.sequence.desc())
+    )
 
 
 def _requirement_payload(item: Requirement) -> dict[str, object]:
