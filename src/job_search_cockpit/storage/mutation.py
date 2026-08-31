@@ -5,7 +5,8 @@ import secrets
 import shutil
 import sqlite3
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -148,6 +149,13 @@ class MutationCoordinator:
                 result = operation(session)
                 self._touch_phase1_authority(session)
                 return result
+
+    @contextmanager
+    def consistent_read(self) -> Iterator[None]:
+        """Hold the mutation fence while a snapshot spans multiple database reads."""
+        with self._mutex:
+            self._assert_available()
+            yield
 
     def begin_request(self) -> None:
         """Enter a request that must finish before vault replacement."""

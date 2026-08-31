@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC
+from hashlib import sha256
 from uuid import uuid4
 
 from sqlalchemy import select, text
@@ -11,6 +12,12 @@ from job_search_cockpit.facts.review import (
     ReviewService,
     is_resume_eligible,
 )
+from job_search_cockpit.phase1_contract.retrieval import (
+    RetrievalCandidate,
+    classify_candidate,
+    is_relevant_candidate,
+    retrieve_matching_candidates,
+)
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1AcceptanceReceiptSnapshot,
     Phase1ActivationInputs,
@@ -18,7 +25,10 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ManualContentReviewRequest,
     Phase1MatchingFactSetSnapshot,
     Phase1MatchingFactSnapshot,
+    Phase1MatchingManifestChoice,
+    Phase1MatchingRelevanceEdge,
     Phase1MatchingRequirementQuery,
+    Phase1MatchingRetrievalManifest,
     Phase1ReadinessSnapshot,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
@@ -345,6 +355,143 @@ class Phase1ContractService:
         )
         if current != expected:
             raise Phase1ContractUnavailable("The Phase I matching fact set changed.")
+        return current
+
+    def snapshot_matching_retrieval_manifest(
+        self, query: Phase1MatchingRequirementQuery
+    ) -> Phase1MatchingRetrievalManifest:
+        with self._coordinator.consistent_read():
+            return self._snapshot_matching_retrieval_manifest(query)
+
+    def _snapshot_matching_retrieval_manifest(
+        self, query: Phase1MatchingRequirementQuery
+    ) -> Phase1MatchingRetrievalManifest:
+        inputs = self.snapshot_activation_inputs()
+        factory = session_factory_for(self._coordinator.engine)
+        eligible: list[RetrievalCandidate] = []
+        all_eligible_refs: list[dict[str, str]] = []
+        ineligible_relevant = 0
+        with factory() as session:
+            claims = session.scalars(
+                select(Claim)
+                .where(Claim.active_revision_id.is_not(None))
+                .order_by(Claim.canonical_key, Claim.id)
+            )
+            for claim in claims:
+                if claim.active_revision_id is None:
+                    continue
+                revision = session.get(ClaimRevision, claim.active_revision_id)
+                if revision is None:
+                    continue
+                support = session.scalar(
+                    select(ClaimSupportAssertion)
+                    .where(
+                        ClaimSupportAssertion.claim_id == claim.id,
+                        ClaimSupportAssertion.revision_id == revision.id,
+                    )
+                    .order_by(ClaimSupportAssertion.created_at.desc())
+                )
+                candidate = RetrievalCandidate(
+                    canonical_key=claim.canonical_key,
+                    claim_id=claim.id,
+                    revision_id=revision.id,
+                    support_assertion_id=support.id if support is not None else "",
+                    category=claim.category,
+                    subject=claim.subject,
+                    safe_wording=revision.display_value,
+                    employer_key=revision.employer_key or None,
+                    period_start=(
+                        revision.period_start.isoformat()
+                        if revision.period_start is not None
+                        else None
+                    ),
+                    period_end=(
+                        revision.period_end.isoformat() if revision.period_end is not None else None
+                    ),
+                )
+                classification = classify_candidate(candidate)
+                relevant = is_relevant_candidate(query, candidate)
+                if classification.known and not relevant:
+                    continue
+                eligibility = is_resume_eligible(
+                    session,
+                    claim.id,
+                    revision.id,
+                    named_use_id="",
+                )
+                if not eligibility.allowed:
+                    if not classification.known:
+                        continue
+                    ineligible_relevant += 1
+                    continue
+                eligible.append(candidate)
+                all_eligible_refs.append(
+                    {
+                        "canonical_key": candidate.canonical_key,
+                        "claim_id": candidate.claim_id,
+                        "revision_id": candidate.revision_id,
+                        "support_assertion_id": candidate.support_assertion_id,
+                        "safe_wording_sha256": sha256(
+                            candidate.safe_wording.encode("utf-8")
+                        ).hexdigest(),
+                    }
+                )
+
+        result = retrieve_matching_candidates(query, tuple(eligible))
+        omission_counts = dict(result.omission_reason_counts)
+        if ineligible_relevant:
+            omission_counts["ineligible_fact"] = ineligible_relevant
+        choices = tuple(
+            Phase1MatchingManifestChoice(
+                canonical_key=item.canonical_key,
+                claim_id=item.claim_id,
+                revision_id=item.revision_id,
+                support_assertion_id=item.support_assertion_id,
+                safe_wording_sha256=sha256(item.safe_wording.encode("utf-8")).hexdigest(),
+            )
+            for item in result.choices
+        )
+        edges = tuple(
+            Phase1MatchingRelevanceEdge(
+                requirement_id=edge.requirement_id,
+                claim_id=edge.claim_id,
+                matched_taxonomy_ids=edge.matched_taxonomy_ids,
+            )
+            for edge in result.edges
+        )
+        query_fingerprint = canonical_fingerprint(query)
+        eligible_set_fingerprint = canonical_fingerprint(all_eligible_refs)
+        fields = {
+            "query": query,
+            "query_fingerprint": query_fingerprint,
+            "retrieval_policy_version": "phase1.matching-retrieval.v1",
+            "choices": choices,
+            "edges": edges,
+            "candidate_universe_count": result.candidate_universe_count,
+            "examined_count": result.examined_count,
+            "omission_reason_counts": tuple(sorted(omission_counts.items())),
+            "complete": result.complete,
+            "structural_state": "complete" if result.complete else "incomplete",
+            "semantic_state": "complete" if result.complete else "unknown",
+            "eligible_set_fingerprint": eligible_set_fingerprint,
+            "profile_fingerprint": inputs.profile.fingerprint,
+            "profile_generation": inputs.profile.active_profile_generation,
+            "readiness_fingerprint": inputs.readiness.fingerprint,
+            "readiness_generation": inputs.readiness.readiness_generation,
+            "authority_fingerprint": inputs.acceptance_receipt.fingerprint,
+            "authority_generation": inputs.readiness.authority_high_water_mark,
+            "restore_generation": inputs.readiness.restore_generation,
+        }
+        return Phase1MatchingRetrievalManifest.model_validate(
+            {**fields, "fingerprint": canonical_fingerprint(fields)}
+        )
+
+    def revalidate_matching_retrieval_manifest(
+        self, expected: Phase1MatchingRetrievalManifest
+    ) -> Phase1MatchingRetrievalManifest:
+        current = self.snapshot_matching_retrieval_manifest(expected.query)
+        if current != expected:
+            raise Phase1ContractUnavailable("The Phase I matching retrieval manifest changed.")
         return current
 
     def request_manual_content_review(

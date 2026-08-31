@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,33 @@ from job_search_cockpit.config import Settings
 from job_search_cockpit.storage.database import create_engine_for, upgrade_database
 from job_search_cockpit.storage.mutation import AppInstanceLock, MutationCoordinator
 from tests.support.database import count_rows, failing_operation
+
+
+def test_consistent_read_blocks_mutation_until_snapshot_finishes(tmp_path: Path) -> None:
+    settings = Settings.for_tests(tmp_path / "data", tmp_path / "sources")
+    upgrade_database(f"sqlite:///{settings.database_path}")
+    lock = AppInstanceLock.acquire(settings)
+    engine = create_engine_for(settings)
+    coordinator = MutationCoordinator(settings, engine, lock)
+    mutation_entered = threading.Event()
+    mutation_finished = threading.Event()
+
+    def mutate() -> None:
+        mutation_entered.set()
+        coordinator.run(lambda session: None, "concurrent_mutation", expected_version=None)
+        mutation_finished.set()
+
+    try:
+        with coordinator.consistent_read():
+            worker = threading.Thread(target=mutate)
+            worker.start()
+            assert mutation_entered.wait(timeout=1)
+            assert not mutation_finished.wait(timeout=0.1)
+        worker.join(timeout=2)
+        assert mutation_finished.is_set()
+    finally:
+        coordinator.dispose()
+        lock.release()
 
 
 def test_coordinator_rolls_back_when_operation_fails(tmp_path: Path) -> None:
