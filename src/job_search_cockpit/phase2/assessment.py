@@ -342,13 +342,16 @@ class AssessmentPublicationService:
         ):
             raise AssessmentUnavailable("Assessment matching fact set changed.")
         allowed = {
-            (choice.claim_id, choice.revision_id, choice.support_assertion_id)
+            (edge.requirement_id, choice.claim_id, choice.revision_id, choice.support_assertion_id)
+            for edge in expected_manifest.edges
             for choice in expected_manifest.choices
+            if choice.claim_id == edge.claim_id
         }
         for mapping in command.mappings:
             if (
                 mapping.relation is not EvidenceRelation.NONE
                 and (
+                    mapping.requirement_id,
                     mapping.claim_id,
                     mapping.revision_id,
                     mapping.support_assertion_id,

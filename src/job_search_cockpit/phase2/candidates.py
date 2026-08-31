@@ -328,13 +328,20 @@ class CandidateWorkflowService:
                 "Every current requirement needs exactly one mapping."
             )
         allowed = {
-            (claim, revision, support)
-            for _key, claim, revision, support, _wording in launch.choices
+            (edge.requirement_id, choice.claim_id, choice.revision_id, choice.support_assertion_id)
+            for edge in launch.manifest.edges
+            for choice in launch.manifest.choices
+            if choice.claim_id == edge.claim_id
         }
         for mapping in mappings:
             if (
                 mapping.relation is not EvidenceRelation.NONE
-                and (mapping.claim_id, mapping.revision_id, mapping.support_assertion_id)
+                and (
+                    mapping.requirement_id,
+                    mapping.claim_id,
+                    mapping.revision_id,
+                    mapping.support_assertion_id,
+                )
                 not in allowed
             ):
                 raise CandidateWorkflowUnavailable(
@@ -369,7 +376,18 @@ class CandidateWorkflowService:
                 state="consuming",
             )
         )
-        self._consume(launch.attempt_id, launch.logical_payload_digest)
+        try:
+            self._consume(launch.attempt_id, launch.logical_payload_digest)
+        except Exception:
+            self._phase1_port.record_disclosure_lifecycle(
+                Phase1DisclosureLifecycleRequest(
+                    authorization_id=launch.phase1_authorization_id,
+                    logical_payload_digest=launch.logical_payload_digest,
+                    state="indeterminate",
+                    reason_code="phase2_consume_failed",
+                )
+            )
+            raise
         try:
             scored = tuple(
                 ScoreRequirement(
