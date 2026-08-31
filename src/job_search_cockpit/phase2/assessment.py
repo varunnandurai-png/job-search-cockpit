@@ -151,6 +151,14 @@ class AssessmentAuthorityService:
             raise AssessmentUnavailable("Assessment authority changed before publication.")
         return current
 
+    def revalidate_matching_fact_set(
+        self, expected: Phase1MatchingFactSetSnapshot
+    ) -> Phase1MatchingFactSetSnapshot:
+        try:
+            return self._phase1_port.revalidate_matching_fact_set(expected)
+        except (Phase1ContractUnavailable, ValueError) as error:
+            raise AssessmentUnavailable("Assessment matching fact set changed.") from error
+
 
 class AssessmentPublicationService:
     """Persists a fully validated local assessment only behind a fresh authority fence."""
@@ -163,14 +171,21 @@ class AssessmentPublicationService:
         self._authority_service = authority_service
         self._coordinator = coordinator
 
-    def publish(self, command: AssessmentPublicationCommand) -> str:
+    def publish(
+        self,
+        command: AssessmentPublicationCommand,
+        *,
+        expected_fact_set: Phase1MatchingFactSetSnapshot | None = None,
+    ) -> str:
         expected = self._authority_service.capture_for_assessment()
         self._authority_service.revalidate_before_publication(expected)
         command.validate()
+        self._validate_fact_set(command, expected_fact_set)
 
         def insert(session: Session) -> str:
             current = self._authority_service.revalidate_before_publication(expected)
             command.validate()
+            self._validate_fact_set(command, expected_fact_set)
             if session.get(Phase2JobRevision, command.result.job_revision_id) is None:
                 raise AssessmentUnavailable("Assessment job revision is unavailable.")
             fields = current.persistence_fields()
@@ -271,6 +286,35 @@ class AssessmentPublicationService:
             return assessment_id
 
         return self._coordinator.run(insert, "publish_match_assessment")
+
+    def _validate_fact_set(
+        self,
+        command: AssessmentPublicationCommand,
+        expected_fact_set: Phase1MatchingFactSetSnapshot | None,
+    ) -> None:
+        """Reject publication when the exact Phase I selection drifts or is forged."""
+        if expected_fact_set is None:
+            return
+        current = self._authority_service.revalidate_matching_fact_set(expected_fact_set)
+        if (
+            current != expected_fact_set
+            or command.fact_set_fingerprint != expected_fact_set.fingerprint
+        ):
+            raise AssessmentUnavailable("Assessment matching fact set changed.")
+        allowed = {
+            (fact.requirement_id, fact.claim_id, fact.revision_id, fact.support_assertion_id)
+            for fact in expected_fact_set.facts
+        }
+        for mapping in command.mappings:
+            if mapping.relation is EvidenceRelation.NONE:
+                continue
+            if (
+                mapping.requirement_id,
+                mapping.claim_id,
+                mapping.revision_id,
+                mapping.support_assertion_id,
+            ) not in allowed:
+                raise AssessmentUnavailable("Assessment mapping is outside the approved fact set.")
 
 
 class AssessmentEvidenceService:

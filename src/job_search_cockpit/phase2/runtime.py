@@ -10,7 +10,11 @@ from job_search_cockpit.phase2.application_drafts import (
     ReusableAnswerService,
     ReusableAnswerStore,
 )
-from job_search_cockpit.phase2.assessment import AssessmentAuthorityService
+from job_search_cockpit.phase2.assessment import (
+    AssessmentAuthorityService,
+    AssessmentPublicationService,
+)
+from job_search_cockpit.phase2.candidates import CandidateWorkflowService
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
 from job_search_cockpit.phase2.discovery import DiscoveryService
@@ -41,6 +45,7 @@ class Phase2Runtime:
     instance_lock: Phase2InstanceLock
     activation_service: Phase2ActivationService
     assessment_review_service: AssessmentReviewService
+    candidate_workflow_service: CandidateWorkflowService
     discovery_service: DiscoveryService
     verified_job_authorization_service: VerifiedJobAuthorizationService
     resume_preparation_service: ResumePreparationService
@@ -67,6 +72,10 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
     instance_lock = Phase2InstanceLock.acquire(phase2_settings)
     coordinator = Phase2MutationCoordinator(phase2_settings, engine, instance_lock)
     activation_service = Phase2ActivationService(phase1_port, coordinator)
+    assessment_authority_service = AssessmentAuthorityService(phase1_port, activation_service)
+    assessment_publication_service = AssessmentPublicationService(
+        assessment_authority_service, coordinator
+    )
     provider_http_clients: list[httpx.Client] = []
 
     def provider_client_factory() -> httpx.Client:
@@ -107,8 +116,14 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         instance_lock=instance_lock,
         activation_service=activation_service,
         assessment_review_service=AssessmentReviewService(
-            AssessmentAuthorityService(phase1_port, activation_service),
+            assessment_authority_service,
             SqlAssessmentReviewStore(engine),
+        ),
+        candidate_workflow_service=CandidateWorkflowService(
+            phase1_port,
+            activation_service,
+            coordinator,
+            assessment_publication_service,
         ),
         discovery_service=DiscoveryService(
             phase2_settings,

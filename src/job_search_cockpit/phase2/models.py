@@ -585,6 +585,60 @@ class Phase2RequirementMapping(AssessmentAuthorityFence, Phase2Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+class Phase2LocalManualMappingAttempt(AssessmentAuthorityFence, Phase2Base):
+    """Opaque, one-use authorization for a local manual mapping response."""
+
+    __tablename__ = "phase2_local_manual_mapping_attempts"
+    __table_args__ = (
+        UniqueConstraint("attempt_id"),
+        UniqueConstraint("nonce_sha256"),
+        UniqueConstraint("phase1_authorization_id"),
+        CheckConstraint(
+            "state IN ('authorized', 'consuming', 'validated_response', 'expired', "
+            "'denied', 'failed', 'indeterminate', 'cancelled')",
+            name="ck_phase2_local_manual_mapping_attempt_state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    nonce_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    phase1_authorization_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    job_revision_id: Mapped[str] = mapped_column(ForeignKey("phase2_job_revisions.id"))
+    selected_location_path_fingerprint: Mapped[str] = mapped_column(String(64))
+    coverage_ledger_fingerprint: Mapped[str] = mapped_column(String(64))
+    manifest_fingerprint: Mapped[str] = mapped_column(String(64))
+    logical_payload_digest: Mapped[str] = mapped_column(String(64))
+    rubric_version: Mapped[str] = mapped_column(String(64))
+    retrieval_configuration_version: Mapped[str] = mapped_column(String(120))
+    interpreter_configuration_version: Mapped[str] = mapped_column(String(120))
+    response_schema_version: Mapped[str] = mapped_column(String(120))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(String(32), default="authorized")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class Phase2LocalManualMappingAttemptEvent(Phase2Base):
+    __tablename__ = "phase2_local_manual_mapping_attempt_events"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "sequence", name="uq_phase2_mapping_attempt_event_sequence"),
+        CheckConstraint(
+            "state IN ('authorized', 'consuming', 'validated_response', 'expired', "
+            "'denied', 'failed', 'indeterminate', 'cancelled')",
+            name="ck_phase2_local_manual_mapping_attempt_event_state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("phase2_local_manual_mapping_attempts.id"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class Phase2ShortlistDecision(AssessmentAuthorityFence, Phase2Base):
     __tablename__ = "phase2_shortlist_decisions"
 
