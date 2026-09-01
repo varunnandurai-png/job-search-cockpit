@@ -163,7 +163,7 @@ def activation_page(request: Request) -> Response:
 def local_review_page(request: Request) -> Response:
     runtime = _runtime(request)
     status = runtime.discovery_service.status_view() if runtime is not None else None
-    candidates = _current_candidates(runtime)
+    candidates, phase1_unavailable = _review_candidates(runtime)
     response: Response = request.app.state.templates.TemplateResponse(
         request,
         "phase2_local_review.html",
@@ -171,6 +171,7 @@ def local_review_page(request: Request) -> Response:
             "csrf_token": request.app.state.launch_session.csrf_token,
             "discovery_status": status,
             "candidates": candidates,
+            "phase1_unavailable": phase1_unavailable,
             "mapped_job_revision_ids": (
                 runtime.locally_mapped_job_revision_ids if runtime is not None else set()
             ),
@@ -204,11 +205,20 @@ async def run_manual_discovery(request: Request) -> Response:
 
 
 def _current_candidates(runtime: Phase2Runtime | None) -> tuple[CandidateReview, ...]:
+    return _review_candidates(runtime)[0]
+
+
+def _review_candidates(
+    runtime: Phase2Runtime | None,
+) -> tuple[tuple[CandidateReview, ...], bool]:
     if runtime is None:
-        return ()
-    with suppress(Phase2ActivationUnavailable, ValueError):
-        return runtime.candidate_workflow_service.current_candidates()
-    return ()
+        return (), False
+    try:
+        return runtime.candidate_workflow_service.current_candidates(), False
+    except Phase1ContractUnavailable:
+        return (), True
+    except (Phase2ActivationUnavailable, ValueError):
+        return (), False
 
 
 @router.post("/phase-2/mapping-attempts")

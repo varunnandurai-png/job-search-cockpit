@@ -26,6 +26,11 @@ def test_phase2_review_page_stays_fail_closed_without_verified_job_readiness(
     assert "Verified job readiness is unavailable" in page.text
     assert "No local final artefacts exist" in page.text
     assert "Drive: not implemented" in page.text
+    assert "Run manual discovery" not in page.text
+    assert "Start new disclosure epoch" not in page.text
+    assert "Map approved evidence" not in page.text
+    assert "Verify selected candidate" not in page.text
+    assert "Prepare tailored résumé" not in page.text
     assert "Submit application" not in page.text
     assert '<button type="button" disabled>Finalise résumé for this job</button>' in page.text
 
