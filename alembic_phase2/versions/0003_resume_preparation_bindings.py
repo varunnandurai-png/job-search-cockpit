@@ -7,8 +7,9 @@ Create Date: 2026-08-24
 
 from collections.abc import Sequence
 
-from alembic import op
 from sqlalchemy import Column, Integer, String, inspect
+
+from alembic import op
 
 revision: str = "0003_resume_preparation_bindings"
 down_revision: str | None = "0002_resume_preparation_attempts"
@@ -55,7 +56,9 @@ def upgrade() -> None:
     with op.batch_alter_table(_TABLE) as batch:
         for name, column_type in missing:
             batch.add_column(Column(name, column_type, nullable=True))
-        batch.create_unique_constraint("uq_phase2_resume_preparation_nonce", ["authorization_nonce"])
+        batch.create_unique_constraint(
+            "uq_phase2_resume_preparation_nonce", ["authorization_nonce"]
+        )
     _replace_append_only_triggers()
 
 

@@ -18,7 +18,10 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from job_search_cockpit.phase1_contract.service import Phase1ContractUnavailable
+from job_search_cockpit.phase1_contract.service import (
+    Phase1ContractService,
+    Phase1ContractUnavailable,
+)
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
     Phase1DisclosureAuthorizationRequest,
@@ -273,7 +276,7 @@ class CandidateWorkflowService:
                 sorted({code for codes in _RELATION_REASONS.values() for code in codes})
             ),
         )
-        digest = canonical_fingerprint(context)
+        digest = Phase1ContractService.disclosure_payload_digest(manifest, context)
         authorization = self._phase1_port.authorize_matching_disclosure(
             Phase1DisclosureAuthorizationRequest(context=context, logical_payload_digest=digest)
         )
