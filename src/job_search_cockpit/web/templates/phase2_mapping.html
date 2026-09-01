@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Map approved evidence · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p>Private local review</p>
+  <h1>Map approved evidence</h1>
+  <p>These approved Phase I facts are transient for this mapping only. Do not copy them into a job record.</p>
+  <form method="post" action="/phase-2/mapping-attempts/{{ launch.attempt_id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% for requirement in launch.requirements %}
+      <fieldset>
+        <legend>Requirement {{ requirement.requirement_id }}</legend>
+        <label for="relation-{{ loop.index }}">Relation</label>
+        <select id="relation-{{ loop.index }}" name="relation:{{ requirement.requirement_id }}" required>
+          <option value="direct">Direct</option>
+          <option value="adjacent">Adjacent</option>
+          <option value="none">No approved evidence</option>
+        </select>
+        <label for="reason-{{ loop.index }}">Reason code</label>
+        <select id="reason-{{ loop.index }}" name="reason:{{ requirement.requirement_id }}" required>
+          <option value="direct/exact_capability_performed">direct/exact_capability_performed</option>
+          <option value="adjacent/same_capability_lower_ownership">adjacent/same_capability_lower_ownership</option>
+          <option value="none/no_approved_evidence_found">none/no_approved_evidence_found</option>
+        </select>
+        <label for="choice-{{ loop.index }}">Approved Phase I fact</label>
+        <select id="choice-{{ loop.index }}" name="choice:{{ requirement.requirement_id }}">
+          <option value="">No approved evidence</option>
+          {% for choice in launch.choices %}
+            <option value="{{ loop.index0 }}">{{ choice[4] }}</option>
+          {% endfor %}
+        </select>
+      </fieldset>
+    {% endfor %}
+    <button class="button--primary" type="submit">Publish evidence mapping</button>
+  </form>
+{% endblock %}

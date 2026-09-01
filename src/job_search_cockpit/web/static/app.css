@@ -181,6 +181,25 @@ details form {
   padding: 0;
 }
 
+.candidate-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.candidate-card {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.candidate-card h3 {
+  margin-top: 0;
+}
+
+.candidate-card form {
+  margin-bottom: 0;
+}
+
 ol,
 ul {
   padding-left: 1.4rem;

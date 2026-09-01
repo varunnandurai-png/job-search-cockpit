@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
+from sqlalchemy import select
 
 from job_search_cockpit.config import Settings
 from job_search_cockpit.phase2.activation import Phase2ActivationService
@@ -14,7 +15,10 @@ from job_search_cockpit.phase2.assessment import (
     AssessmentAuthorityService,
     AssessmentPublicationService,
 )
-from job_search_cockpit.phase2.candidates import CandidateWorkflowService
+from job_search_cockpit.phase2.candidates import (
+    CandidateWorkflowService,
+    LocalManualMappingLaunch,
+)
 from job_search_cockpit.phase2.config import Phase2Settings
 from job_search_cockpit.phase2.database import create_phase2_engine, upgrade_phase2_database
 from job_search_cockpit.phase2.discovery import DiscoveryService
@@ -25,6 +29,7 @@ from job_search_cockpit.phase2.drive_auth import (
 )
 from job_search_cockpit.phase2.drive_backup import DriveBackupStore, FinalResumeDriveBackupService
 from job_search_cockpit.phase2.finalisation import LocalResumeFinalisationService
+from job_search_cockpit.phase2.models import Phase2JobRevision
 from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2MutationCoordinator
 from job_search_cockpit.phase2.providers import create_provider_http_client
 from job_search_cockpit.phase2.resume_safety import (
@@ -55,6 +60,32 @@ class Phase2Runtime:
     drive_backup_service: FinalResumeDriveBackupService | None
     drive_http_client: httpx.Client | None
     provider_http_clients: list[httpx.Client]
+    phase1_port: Phase1MatchingPort
+    # Wording releases are deliberately process-local and are never serialized.
+    # Restarting the local app safely requires a new mapping authorization.
+    local_manual_mapping_launches: dict[str, LocalManualMappingLaunch] = field(
+        default_factory=dict
+    )
+    locally_mapped_job_revision_ids: set[str] = field(default_factory=set)
+
+    def remember_local_manual_mapping(self, launch: LocalManualMappingLaunch) -> None:
+        self.local_manual_mapping_launches[launch.attempt_id] = launch
+
+    def local_manual_mapping(self, attempt_id: str) -> LocalManualMappingLaunch | None:
+        return self.local_manual_mapping_launches.get(attempt_id)
+
+    def forget_local_manual_mapping(self, attempt_id: str) -> None:
+        self.local_manual_mapping_launches.pop(attempt_id, None)
+
+    def mark_locally_mapped(self, job_revision_id: str) -> None:
+        self.locally_mapped_job_revision_ids.add(job_revision_id)
+
+    def current_candidate_source_urls(self) -> dict[str, str]:
+        with self.coordinator._session_factory() as session:
+            return {
+                revision.id: revision.canonical_url
+                for revision in session.scalars(select(Phase2JobRevision))
+            }
 
     def close(self) -> None:
         for client in self.provider_http_clients:
@@ -149,4 +180,5 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         drive_backup_service=drive_backup_service,
         drive_http_client=drive_http_client,
         provider_http_clients=provider_http_clients,
+        phase1_port=phase1_port,
     )

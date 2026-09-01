@@ -1,11 +1,19 @@
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
+from job_search_cockpit.phase1_contract.snapshots import Phase1DisclosureEpochRequest
 from job_search_cockpit.phase2.activation import Phase2ActivationService
+from job_search_cockpit.phase2.assessment_types import EvidenceRelation
+from job_search_cockpit.phase2.candidates import (
+    CandidateReview,
+    CandidateWorkflowUnavailable,
+    LocalManualMappingLaunch,
+    LocalManualMappingSelection,
+)
 from job_search_cockpit.phase2.finalisation import (
     FINALISE_CONFIRMATION,
     FinalisationError,
@@ -136,12 +144,140 @@ def activation_page(request: Request) -> Response:
 def local_review_page(request: Request) -> Response:
     runtime = _runtime(request)
     status = runtime.discovery_service.status_view() if runtime is not None else None
+    candidates = _current_candidates(runtime)
     response: Response = request.app.state.templates.TemplateResponse(
         request,
         "phase2_local_review.html",
-        {"csrf_token": request.app.state.launch_session.csrf_token, "discovery_status": status},
+        {
+            "csrf_token": request.app.state.launch_session.csrf_token,
+            "discovery_status": status,
+            "candidates": candidates,
+            "mapped_job_revision_ids": (
+                runtime.locally_mapped_job_revision_ids if runtime is not None else set()
+            ),
+            "candidate_source_urls": (
+                runtime.current_candidate_source_urls() if runtime is not None else {}
+            ),
+        },
     )
     return response
+
+
+@router.post("/phase-2/discovery-runs")
+async def run_manual_discovery(request: Request) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    if runtime is not None:
+        # The service owns its approved providers, query, caps, and spend limits.
+        # This route accepts no browser-controlled discovery parameters.
+        with suppress(Phase2ActivationUnavailable, ValueError):
+            runtime.discovery_service.run_micro_pilot()
+    return RedirectResponse("/phase-2/review", status_code=303)
+
+
+def _current_candidates(runtime: Phase2Runtime | None) -> tuple[CandidateReview, ...]:
+    if runtime is None:
+        return ()
+    with suppress(Phase2ActivationUnavailable, ValueError):
+        return runtime.candidate_workflow_service.current_candidates()
+    return ()
+
+
+@router.post("/phase-2/mapping-attempts")
+async def begin_mapping(request: Request) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    revision_id = _bounded(form.get("job_revision_id"), 120)
+    candidate = next(
+        (item for item in _current_candidates(runtime) if item.job_revision_id == revision_id), None
+    )
+    if runtime is None or candidate is None or candidate.gate_result.value != "pass":
+        return RedirectResponse("/phase-2/review", status_code=303)
+    try:
+        launch = runtime.candidate_workflow_service.begin_local_manual_mapping(
+            revision_id, candidate.locations[0]
+        )
+    except (CandidateWorkflowUnavailable, Phase2ActivationUnavailable, ValueError, IndexError):
+        return RedirectResponse("/phase-2/review", status_code=303)
+    runtime.remember_local_manual_mapping(launch)
+    return RedirectResponse(f"/phase-2/mapping-attempts/{launch.attempt_id}", status_code=303)
+
+
+@router.get("/phase-2/mapping-attempts/{attempt_id}", response_class=HTMLResponse)
+def mapping_page(request: Request, attempt_id: str) -> Response:
+    runtime = _runtime(request)
+    launch = runtime.local_manual_mapping(_bounded(attempt_id, 120)) if runtime else None
+    if runtime is None or launch is None:
+        return RedirectResponse("/phase-2/review", status_code=303)
+    response: Response = request.app.state.templates.TemplateResponse(
+        request,
+        "phase2_mapping.html",
+        {"csrf_token": request.app.state.launch_session.csrf_token, "launch": launch},
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.post("/phase-2/mapping-attempts/{attempt_id}")
+async def publish_mapping(request: Request, attempt_id: str) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    launch = runtime.local_manual_mapping(_bounded(attempt_id, 120)) if runtime else None
+    if runtime is None or launch is None:
+        return RedirectResponse("/phase-2/review", status_code=303)
+    try:
+        selections = _mapping_selections(launch, form)
+        runtime.candidate_workflow_service.publish_local_manual_mapping(launch, selections)
+    except (CandidateWorkflowUnavailable, Phase2ActivationUnavailable, ValueError):
+        return RedirectResponse(f"/phase-2/mapping-attempts/{launch.attempt_id}", status_code=303)
+    runtime.forget_local_manual_mapping(launch.attempt_id)
+    runtime.mark_locally_mapped(launch.job_revision_id)
+    return RedirectResponse("/phase-2/review", status_code=303)
+
+
+def _mapping_selections(
+    launch: LocalManualMappingLaunch, form: object
+) -> tuple[LocalManualMappingSelection, ...]:
+    values = cast("dict[str, object]", form)
+    selections: list[LocalManualMappingSelection] = []
+    for requirement in launch.requirements:
+        key = requirement.requirement_id
+        relation = EvidenceRelation(str(values.get(f"relation:{key}", "")))
+        reason = _bounded(values.get(f"reason:{key}"), 120)
+        choice_index = _bounded(values.get(f"choice:{key}"), 8)
+        if relation is EvidenceRelation.NONE:
+            if choice_index:
+                raise ValueError("No-evidence mappings cannot select a fact.")
+            selections.append(LocalManualMappingSelection(key, relation, reason))
+            continue
+        choice = launch.choices[int(choice_index)]
+        selections.append(
+            LocalManualMappingSelection(key, relation, reason, choice[1], choice[2], choice[3])
+        )
+    return tuple(selections)
+
+
+@router.post("/phase-2/disclosure-epochs")
+async def renew_disclosure_epoch(request: Request) -> Response:
+    form = await request.form()
+    if not request.app.state.launch_session.valid_csrf(form.get("csrf_token")):
+        return PlainTextResponse("Invalid request token.", status_code=403)
+    runtime = _runtime(request)
+    if runtime is not None:
+        with suppress(ValueError):
+            runtime.phase1_port.start_new_matching_disclosure_epoch(
+                Phase1DisclosureEpochRequest(
+                    reason=_bounded(form.get("reason"), 500),
+                    confirmation=str(form.get("confirmation", "")),
+                )
+            )
+    return RedirectResponse("/phase-2/review", status_code=303)
 
 
 @router.get("/phase-2/assessments", response_class=HTMLResponse)
@@ -286,28 +422,25 @@ async def verify_candidate(request: Request) -> Response:
         return PlainTextResponse("Invalid request token.", status_code=403)
     runtime = _runtime(request)
     if runtime is not None:
-        codes = tuple(
-            code.strip()
-            for code in str(form.get("unknown_mandatory_rule_codes", "")).split(",")
-            if code.strip()
+        revision_id = _bounded(form.get("job_revision_id"), 120)
+        candidate = next(
+            (item for item in _current_candidates(runtime) if item.job_revision_id == revision_id),
+            None,
         )
-        with suppress(Phase2ActivationUnavailable, ResumePreparationError, ValueError):
-            runtime.verified_job_authorization_service.verify(
-                VerifyCandidateCommand(
-                    job_revision_id=str(form.get("job_revision_id", "")),
-                    selected_location_path=str(form.get("selected_location_path", "")),
-                    actor=str(form.get("actor", "")),
-                    reason=str(form.get("reason", "")),
-                    confirmation=str(form.get("confirmation", "")),
-                    eligibility=_eligibility(form.get("eligibility")),
-                    unknown_mandatory_rule_codes=codes,
+        if (
+            candidate is not None
+            and candidate.gate_result.value == "pass"
+            and revision_id in runtime.locally_mapped_job_revision_ids
+        ):
+            with suppress(Phase2ActivationUnavailable, ResumePreparationError, ValueError):
+                runtime.verified_job_authorization_service.verify(
+                    VerifyCandidateCommand(
+                        job_revision_id=revision_id,
+                        selected_location_path=candidate.locations[0],
+                        actor="Varun",
+                        reason=_bounded(form.get("reason"), 500),
+                        confirmation=str(form.get("confirmation", "")),
+                        eligibility="eligible",
+                    )
                 )
-            )
     return RedirectResponse("/phase-2/review", status_code=303)
-
-
-def _eligibility(value: object) -> Literal["eligible", "ineligible", "needs_clarification"]:
-    candidate = str(value)
-    if candidate in {"eligible", "ineligible", "needs_clarification"}:
-        return cast(Literal["eligible", "ineligible", "needs_clarification"], candidate)
-    return "needs_clarification"

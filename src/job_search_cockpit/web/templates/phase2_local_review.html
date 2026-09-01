@@ -2,7 +2,7 @@
 {% block title %}Local review · Job Search Cockpit{% endblock %}
 {% block content %}
   <p>Private local review</p>
-  <h1>Résumé finalisation review</h1>
+  <h1>Local job review</h1>
   {% if error %}
     <p role="alert">{{ error }}</p>
   {% elif resume_review %}
@@ -68,16 +68,16 @@
       {% endif %}
     </section>
 
-    <p>No provider, browser automation, application submission, sharing, or Drive action is available.</p>
+    <p>Application submission and browser automation remain manual.</p>
   {% else %}
-  <p>Verified job readiness is unavailable. No job has been authorised for preparation.</p>
+  <p>Review public candidate metadata locally before preparing a tailored résumé.</p>
 
   <section aria-labelledby="discovery-status">
     <h2 id="discovery-status">Provider discovery</h2>
     {% if discovery_status and discovery_status.provider_configuration_available %}
       <p>Provider configuration is available locally. Discovery remains manual.</p>
     {% else %}
-      <p>Provider configuration is unavailable. No provider request can be started here.</p>
+      <p>Provider configuration is unavailable. Discovery cannot run until it is configured locally.</p>
     {% endif %}
     {% if discovery_status and discovery_status.last_run_at %}
       <p>Last manual run recorded. Public observations: {{ discovery_status.last_run_counts.values() | sum }}.</p>
@@ -85,22 +85,83 @@
       <p>No manual provider run has been recorded.</p>
     {% endif %}
     <p>Candidates: {{ discovery_status.candidate_count if discovery_status else 0 }}. Verifications: {{ discovery_status.verification_count if discovery_status else 0 }}.</p>
+    <form method="post" action="/phase-2/discovery-runs">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="button--primary" type="submit">Run manual discovery</button>
+    </form>
   </section>
 
-  <section aria-labelledby="verification-action">
-    <h2 id="verification-action">Candidate verification</h2>
-    <p>A candidate must be selected and explicitly verified before preparation becomes available.</p>
-    <button type="button" disabled>Verify selected candidate</button>
+  <section aria-labelledby="candidate-results">
+    <h2 id="candidate-results">Current candidates</h2>
+    {% if candidates %}
+      <div class="candidate-list" role="list">
+        {% for candidate in candidates %}
+          <article class="candidate-card" data-candidate="{{ candidate.job_revision_id }}" role="listitem">
+            <h3>{{ candidate.title }}</h3>
+            <p>{{ candidate.employer_name }} · {{ candidate.locations | join(', ') }}</p>
+            {% if candidate_source_urls.get(candidate.job_revision_id) %}
+              <p><a href="{{ candidate_source_urls[candidate.job_revision_id] }}" rel="noreferrer">Open public source</a></p>
+            {% endif %}
+            <dl>
+              <div><dt>Score</dt><dd>Pending approved-evidence mapping</dd></div>
+              <div><dt>Confidence</dt><dd>{{ candidate.confidence.value }}</dd></div>
+              <div><dt>Gate</dt><dd>{{ candidate.gate_result.value }}</dd></div>
+              <div><dt>Reason codes</dt><dd>{{ candidate.gate_reason_codes | join(', ') }}</dd></div>
+            </dl>
+            {% if candidate.gate_result.value == 'pass' %}
+              {% if candidate.job_revision_id in mapped_job_revision_ids %}
+                <form method="post" action="/phase-2/verify">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="job_revision_id" value="{{ candidate.job_revision_id }}">
+                  <input type="hidden" name="selected_location_path" value="{{ candidate.locations[0] }}">
+                  <input type="hidden" name="actor" value="Varun">
+                  <label for="verification-reason-{{ loop.index }}">Reason</label>
+                  <textarea id="verification-reason-{{ loop.index }}" name="reason" required></textarea>
+                  <label for="verification-confirmation-{{ loop.index }}">Exact confirmation</label>
+                  <input id="verification-confirmation-{{ loop.index }}" name="confirmation" required autocomplete="off">
+                  <p>Type: VERIFY JOB FOR PHASE II PREPARATION</p>
+                  <button class="button--primary" type="submit">Verify selected candidate</button>
+                </form>
+              {% else %}
+                <form method="post" action="/phase-2/mapping-attempts">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="job_revision_id" value="{{ candidate.job_revision_id }}">
+                  <button class="button--primary" type="submit">Map approved evidence</button>
+                </form>
+              {% endif %}
+            {% else %}
+              <p>Eligibility must be resolved before approved evidence can be mapped or the candidate can be verified.</p>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>No current candidates. Run manual discovery when the local provider configuration is ready.</p>
+    {% endif %}
   </section>
 
   <section aria-labelledby="eligibility-status">
     <h2 id="eligibility-status">Eligibility</h2>
-    <p>Unavailable until a future verified discovery system supplies a job-specific authorization.</p>
+    <p>Eligibility is evaluated from the current server-side profile and candidate gates.</p>
+  </section>
+
+  <section aria-labelledby="disclosure-budget">
+    <h2 id="disclosure-budget">Disclosure budget epoch</h2>
+    <p>Start a new epoch only after reviewing the prior mapping work. Discovery and retries never renew it automatically.</p>
+    <form method="post" action="/phase-2/disclosure-epochs">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="epoch-reason">Reason</label>
+      <textarea id="epoch-reason" name="reason" required></textarea>
+      <label for="epoch-confirmation">Exact confirmation</label>
+      <input id="epoch-confirmation" name="confirmation" required autocomplete="off">
+      <p>Type: START NEW MATCHING DISCLOSURE EPOCH</p>
+      <button type="submit">Start new disclosure epoch</button>
+    </form>
   </section>
 
   <section aria-labelledby="requirements-status">
     <h2 id="requirements-status">Requirements and Phase I review</h2>
-    <p>Supported requirements, gaps, and pending Phase I reviews are unavailable because no authorised job requirements exist.</p>
+    <p>Requirement wording is disclosed only inside a single approved evidence-mapping session and is never retained here.</p>
   </section>
 
   <section aria-labelledby="finalisation-status">
@@ -111,7 +172,7 @@
 
   <section aria-labelledby="drive-status">
     <h2 id="drive-status">Storage integration</h2>
-    <p>Drive: not implemented. Sign-in, consent, upload, sharing, and retries are unavailable.</p>
+    <p>Private Drive backup is available only after a local final résumé exists and explicit authorization is completed.</p>
   </section>
   {% endif %}
 {% endblock %}
