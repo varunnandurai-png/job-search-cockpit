@@ -99,16 +99,19 @@ class AssessmentPublicationCommand:
             raise ValueError("every published requirement needs one evidence mapping")
         keys = dict(self.canonical_fact_keys)
         if len(keys) != len(self.canonical_fact_keys) or any(
-            not key or key.startswith("job.") for key in keys.values()
+            not isinstance(key, str)
+            or re.fullmatch(r"[a-z][a-z0-9_.-]{0,254}", key) is None
+            or key.startswith("job.")
+            for key in keys.values()
         ):
             raise ValueError("published canonical fact keys are invalid")
-        if keys:
-            for mapping in self.mappings:
-                if mapping.relation is EvidenceRelation.NONE:
-                    if mapping.requirement_id in keys:
-                        raise ValueError("unsupported mappings cannot carry canonical fact keys")
-                elif mapping.requirement_id not in keys:
-                    raise ValueError("supported mappings need a canonical fact key")
+        supported_mapping_ids = {
+            mapping.requirement_id
+            for mapping in self.mappings
+            if mapping.relation is not EvidenceRelation.NONE
+        }
+        if set(keys) != supported_mapping_ids:
+            raise ValueError("supported mappings need exactly one canonical fact key")
 
 
 @dataclass(frozen=True, slots=True)

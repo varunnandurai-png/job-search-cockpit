@@ -138,7 +138,7 @@ def test_requirement_evidence_mapping_refuses_claimed_support_without_exact_fact
         RequirementEvidenceMapping(
             requirement_id=requirement.requirement_id,
             relation=EvidenceRelation.DIRECT,
-                reason_code="direct/exact_capability_performed",
+            reason_code="direct/exact_capability_performed",
         )
 
 
@@ -261,6 +261,75 @@ def test_publication_command_rejects_a_rubric_version_too_large_to_persist() -> 
 
     with pytest.raises(ValueError, match="rubric version must fit persisted metadata"):
         command.validate()
+
+
+def _publication_command_for_canonical_key_validation(
+    canonical_fact_keys: tuple[tuple[str, str], ...],
+) -> AssessmentPublicationCommand:
+    requirement = Requirement(
+        requirement_id="requirements.product-role",
+        kind=RequirementKind.REQUIRED,
+        component=ScoringComponent.ROLE,
+        source_span_id="span-1",
+        start_offset=0,
+        end_offset=12,
+    )
+    return AssessmentPublicationCommand(
+        result=MatchAssessmentResult(
+            assessment_id="assessment-1",
+            job_revision_id="revision-1",
+            components=MatchScoreComponents(20, 20, 20, 10, 15, 10, 5),
+            qualified_band=QualifiedMatchBand.STRONG,
+            confidence=ConfidenceState.HIGH,
+            hard_gates_pass=True,
+            current=True,
+            critical_floors_pass=True,
+            meaningful_role_and_responsibility=True,
+            worthwhile_structure=True,
+            unsupported_required=False,
+        ),
+        requirements=(requirement,),
+        mappings=(
+            RequirementEvidenceMapping(
+                requirement_id=requirement.requirement_id,
+                relation=EvidenceRelation.DIRECT,
+                reason_code="direct/exact_capability_performed",
+                claim_id="claim-1",
+                revision_id="revision-1",
+                support_assertion_id="support-1",
+            ),
+        ),
+        gate_result=GateResult.PASS,
+        gate_reason_codes=("eligible_role",),
+        location_paths=(),
+        rubric_version="rubric-v1",
+        coverage_ledger_fingerprint="a" * 64,
+        fact_set_fingerprint="b" * 64,
+        assessment_state="stable",
+        shortlist_reason_codes=("qualified_match",),
+        canonical_fact_keys=canonical_fact_keys,
+    )
+
+
+@pytest.mark.parametrize(
+    ("canonical_fact_keys", "message"),
+    (
+        ((), "supported mappings need exactly one canonical fact key"),
+        (
+            (("requirements.product-role", "job.revision.required.1"),),
+            "published canonical fact keys are invalid",
+        ),
+        (
+            (("requirements.product-role", "s" * 256),),
+            "published canonical fact keys are invalid",
+        ),
+    ),
+)
+def test_publication_command_rejects_missing_or_invalid_canonical_fact_keys(
+    canonical_fact_keys: tuple[tuple[str, str], ...], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _publication_command_for_canonical_key_validation(canonical_fact_keys).validate()
 
 
 def test_blocked_confidence_cannot_enter_the_focused_shortlist_at_any_score() -> None:

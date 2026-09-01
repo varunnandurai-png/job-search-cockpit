@@ -162,6 +162,7 @@ def _publication_command() -> AssessmentPublicationCommand:
         fact_set_fingerprint="e" * 64,
         assessment_state="stable",
         shortlist_reason_codes=("qualified_match",),
+        canonical_fact_keys=((requirement.requirement_id, "skills.product_management"),),
     )
 
 

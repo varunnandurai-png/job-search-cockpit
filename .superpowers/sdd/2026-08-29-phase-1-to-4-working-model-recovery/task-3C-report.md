@@ -27,7 +27,7 @@ in the Phase II assessment boundary and are never written to the resume ledger.
 
 ## Verification
 
-`97 passed, 1 warning` for Task 3/Phase II/Phase I contract, scoring, mapping,
+`101 passed, 1 warning` for Task 3/Phase II/Phase I contract, scoring, mapping,
 and migration-head suites; Ruff, mypy, and `git diff --check` also pass.
 
 ## Commit
@@ -39,3 +39,11 @@ Recorded in the accompanying `feat: bind resume ledgers to canonical assessment 
 Existing assessments created before migration `0019` have no canonical mapping keys
 and deliberately cannot issue a resume ledger. They must be reassessed through the
 current local-manual flow.
+
+## Fix round 1
+
+- Publication now requires exactly one canonical Phase I key for every non-`none`
+  mapping and rejects missing, `job.*`, malformed, and overlength keys.
+- Ledger verification filters by the full authority fence and publishable assessment
+  state before selecting the newest assessment, so a later nonpublishable row cannot
+  mask a valid current assessment.

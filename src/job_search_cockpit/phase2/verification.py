@@ -136,23 +136,25 @@ class VerifiedJobAuthorizationService:
         expected_phase1: Phase1ActivationInputs,
         view: Phase2ActivationView,
     ) -> Phase2ResumeRequirementLedger:
-        assessment = session.scalar(
-            select(Phase2MatchAssessment)
-            .where(Phase2MatchAssessment.job_revision_id == revision.id)
-            .order_by(Phase2MatchAssessment.created_at.desc(), Phase2MatchAssessment.id.desc())
-        )
-        if assessment is None or assessment.assessment_state not in {"stable", "adjudicated"}:
-            raise ResumePreparationError("The job has no current assessment.")
         fields = _phase1_fields(expected_phase1)
         phase2_fields = {
             "phase2_activation_generation": view.activation_generation,
             "phase2_restore_generation": view.restore_generation,
         }
-        if any(
-            getattr(assessment, field) != value
-            for field, value in {**fields, **phase2_fields}.items()
-        ):
-            raise ResumePreparationError("The job assessment is no longer current.")
+        assessment = session.scalar(
+            select(Phase2MatchAssessment)
+            .where(
+                Phase2MatchAssessment.job_revision_id == revision.id,
+                Phase2MatchAssessment.assessment_state.in_(("stable", "adjudicated")),
+                *(
+                    getattr(Phase2MatchAssessment, field) == value
+                    for field, value in {**fields, **phase2_fields}.items()
+                ),
+            )
+            .order_by(Phase2MatchAssessment.created_at.desc(), Phase2MatchAssessment.id.desc())
+        )
+        if assessment is None:
+            raise ResumePreparationError("The job has no current assessment.")
         mappings = tuple(
             session.scalars(
                 select(Phase2RequirementMapping)

@@ -381,6 +381,55 @@ def test_verification_issues_a_new_ledger_when_the_current_assessment_changes(
         lock.release()
 
 
+def test_verification_ignores_a_newer_nonpublishable_assessment(
+    phase2_settings: Phase2Settings,
+) -> None:
+    service, coordinator, lock = _service(phase2_settings, ("skills.python",))
+    try:
+
+        def append_nonpublishable_assessment(session: Session) -> None:
+            session.add(
+                Phase2JobGateAssessment(
+                    id="gate-draft",
+                    job_revision_id="revision-1",
+                    profile_fingerprint="a" * 64,
+                    result="pass",
+                    reason_codes_json=["eligible"],
+                    **_FENCE,
+                )
+            )
+            session.flush()
+            session.add(
+                Phase2MatchAssessment(
+                    id="assessment-draft",
+                    job_revision_id="revision-1",
+                    job_gate_assessment_id="gate-draft",
+                    rubric_version="test",
+                    coverage_ledger_fingerprint="k" * 64,
+                    total_score=0,
+                    qualified_band="unbound",
+                    critical_floors_pass=False,
+                    meaningful_role_and_responsibility=False,
+                    worthwhile_structure=False,
+                    unsupported_required=True,
+                    confidence="blocked",
+                    assessment_state="draft",
+                    fact_set_fingerprint="l" * 64,
+                    created_at=_NOW + timedelta(days=1),
+                    **_FENCE,
+                )
+            )
+
+        coordinator.run(append_nonpublishable_assessment, "append_nonpublishable_assessment")
+
+        authorization = service.verify(_command())
+
+        assert authorization.requirement_ids == ("skills.python",)
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
 @pytest.mark.parametrize(
     ("relation", "canonical_key", "message"),
     (
