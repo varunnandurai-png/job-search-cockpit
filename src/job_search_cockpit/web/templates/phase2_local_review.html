@@ -109,7 +109,13 @@
               <div><dt>Reason codes</dt><dd>{{ candidate.gate_reason_codes | join(', ') }}</dd></div>
             </dl>
             {% if candidate.gate_result.value == 'pass' %}
-              {% if candidate.job_revision_id in mapped_job_revision_ids %}
+              {% if verified_resume_job_ids.get(candidate.job_revision_id) %}
+                <form method="post" action="/phase-2/resume-reviews">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="job_id" value="{{ verified_resume_job_ids[candidate.job_revision_id] }}">
+                  <button class="button--primary" type="submit">Prepare tailored résumé</button>
+                </form>
+              {% elif candidate.job_revision_id in mapped_job_revision_ids %}
                 <form method="post" action="/phase-2/verify">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <input type="hidden" name="job_revision_id" value="{{ candidate.job_revision_id }}">

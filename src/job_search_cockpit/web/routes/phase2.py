@@ -1,10 +1,13 @@
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from sqlalchemy import func, select
 
+from job_search_cockpit.phase1_contract.service import Phase1ContractUnavailable
 from job_search_cockpit.phase1_contract.snapshots import Phase1DisclosureEpochRequest
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.assessment_types import EvidenceRelation
@@ -25,8 +28,24 @@ from job_search_cockpit.phase2.resume_safety import ResumePreparationError
 from job_search_cockpit.phase2.runtime import Phase2Runtime
 from job_search_cockpit.phase2.types import ActivationCommand, Phase2ActivationUnavailable
 from job_search_cockpit.phase2.verification import VerifyCandidateCommand
+from job_search_cockpit.storage.models import (
+    Phase1FactDisclosureAuthorization,
+    Phase1FactDisclosureAuthorizationFact,
+    Phase1FactDisclosureAuthorizationTaxonomy,
+    Phase1MatchingDisclosureEpoch,
+)
 
 router = APIRouter()
+
+
+@dataclass(frozen=True, slots=True)
+class DisclosureBudgetView:
+    epoch_number: int
+    policy_generation: int
+    disclosed_fact_count: int
+    disclosed_taxonomy_count: int
+    fact_budget: int = 64
+    taxonomy_budget: int = 32
 
 
 def _activation_service(request: Request) -> Phase2ActivationService | None:
@@ -155,6 +174,13 @@ def local_review_page(request: Request) -> Response:
             "mapped_job_revision_ids": (
                 runtime.locally_mapped_job_revision_ids if runtime is not None else set()
             ),
+            "verified_resume_job_ids": {
+                candidate.job_revision_id: job_id
+                for candidate in candidates
+                if runtime is not None
+                if (job_id := runtime.verified_resume_job_id(candidate.job_revision_id))
+                is not None
+            },
             "candidate_source_urls": (
                 runtime.current_candidate_source_urls() if runtime is not None else {}
             ),
@@ -256,7 +282,12 @@ def _mapping_selections(
                 raise ValueError("No-evidence mappings cannot select a fact.")
             selections.append(LocalManualMappingSelection(key, relation, reason))
             continue
-        choice = launch.choices[int(choice_index)]
+        if not choice_index.isdecimal():
+            raise ValueError("A supported mapping must select an approved fact.")
+        index = int(choice_index)
+        if not 0 <= index < len(launch.choices):
+            raise ValueError("The approved fact selection is unavailable.")
+        choice = launch.choices[index]
         selections.append(
             LocalManualMappingSelection(key, relation, reason, choice[1], choice[2], choice[3])
         )
@@ -270,7 +301,7 @@ async def renew_disclosure_epoch(request: Request) -> Response:
         return PlainTextResponse("Invalid request token.", status_code=403)
     runtime = _runtime(request)
     if runtime is not None:
-        with suppress(ValueError):
+        with suppress(Phase1ContractUnavailable, ValueError):
             runtime.phase1_port.start_new_matching_disclosure_epoch(
                 Phase1DisclosureEpochRequest(
                     reason=_bounded(form.get("reason"), 500),
@@ -278,6 +309,52 @@ async def renew_disclosure_epoch(request: Request) -> Response:
                 )
             )
     return RedirectResponse("/phase-2/review", status_code=303)
+
+
+@router.get("/phase-2/disclosure-budget", response_class=HTMLResponse)
+def disclosure_budget_page(request: Request) -> Response:
+    view = _disclosure_budget_view(request)
+    response: Response = request.app.state.templates.TemplateResponse(
+        request,
+        "phase2_disclosure_budget.html",
+        {"csrf_token": request.app.state.launch_session.csrf_token, "disclosure_budget": view},
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _disclosure_budget_view(request: Request) -> DisclosureBudgetView | None:
+    coordinator = request.app.state.prepared.coordinator
+    with coordinator._session_factory() as session:
+        epoch = session.scalar(
+            select(Phase1MatchingDisclosureEpoch).order_by(
+                Phase1MatchingDisclosureEpoch.epoch_number.desc()
+            )
+        )
+        if epoch is None:
+            return None
+        authorization_ids = select(Phase1FactDisclosureAuthorization.id).where(
+            Phase1FactDisclosureAuthorization.disclosure_budget_epoch == epoch.epoch_number
+        )
+        fact_count = int(
+            session.scalar(
+                select(func.count(func.distinct(Phase1FactDisclosureAuthorizationFact.claim_id))).where(
+                    Phase1FactDisclosureAuthorizationFact.authorization_id.in_(authorization_ids)
+                )
+            )
+            or 0
+        )
+        taxonomy_count = int(
+            session.scalar(
+                select(
+                    func.count(func.distinct(Phase1FactDisclosureAuthorizationTaxonomy.taxonomy_id))
+                ).where(Phase1FactDisclosureAuthorizationTaxonomy.authorization_id.in_(authorization_ids))
+            )
+            or 0
+        )
+    return DisclosureBudgetView(
+        epoch.epoch_number, epoch.policy_generation, fact_count, taxonomy_count
+    )
 
 
 @router.get("/phase-2/assessments", response_class=HTMLResponse)

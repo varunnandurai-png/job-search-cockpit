@@ -1,11 +1,22 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
-from job_search_cockpit.phase2.assessment_types import ConfidenceState, GateResult
+import pytest
+
+from job_search_cockpit.phase2.assessment_types import (
+    ConfidenceState,
+    EvidenceRelation,
+    GateResult,
+    Requirement,
+    RequirementKind,
+    ScoringComponent,
+)
 from job_search_cockpit.phase2.candidates import CandidateReview
 from job_search_cockpit.phase2.discovery import DiscoveryResult, DiscoveryStatusView
 from job_search_cockpit.phase2.runtime import Phase2Runtime
 from job_search_cockpit.ports import PreparedVault
+from job_search_cockpit.web.routes.phase2 import _mapping_selections
 from tests.support.web import authenticated_test_app
 
 
@@ -83,3 +94,49 @@ def test_ineligible_candidate_has_no_verification_form(vault_settings) -> None:
 
     assert 'data-candidate="ineligible"' in page.text
     assert "Eligibility must be resolved" in _candidate_button_fragment(page.text, "ineligible")
+
+
+@pytest.mark.parametrize("choice", ("-1", "word", "3"))
+def test_mapping_selection_rejects_noncanonical_or_out_of_range_choice(choice: str) -> None:
+    launch = SimpleNamespace(
+        requirements=(
+            Requirement(
+                "skills.product_management",
+                RequirementKind.REQUIRED,
+                ScoringComponent.EVIDENCE,
+                "span-1",
+                0,
+                10,
+            ),
+        ),
+        choices=(("key", "claim", "revision", "support", "safe wording"),),
+    )
+
+    with pytest.raises(ValueError):
+        _mapping_selections(
+            launch,
+            {
+                "relation:skills.product_management": EvidenceRelation.DIRECT.value,
+                "reason:skills.product_management": "direct/exact_capability_performed",
+                "choice:skills.product_management": choice,
+            },
+        )
+
+
+def test_disclosure_budget_is_authenticated_no_store_and_renewal_rejects_wrong_confirmation(
+    vault_settings,
+) -> None:
+    with authenticated_test_app(vault_settings, configure_prepared=_configure) as app:
+        page = app.get("/phase-2/disclosure-budget")
+        rejected = app.post(
+            "/phase-2/disclosure-epochs",
+            data={"reason": "reviewed", "confirmation": "wrong"},
+            follow_redirects=False,
+        )
+        after = app.get("/phase-2/disclosure-budget")
+
+    assert page.status_code == 200
+    assert page.headers["cache-control"] == "no-store"
+    assert "Current epoch" in page.text
+    assert rejected.status_code == 303
+    assert "Current epoch" in after.text

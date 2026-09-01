@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Disclosure budget · Job Search Cockpit{% endblock %}
+{% block content %}
+  <p>Private local review</p>
+  <h1>Disclosure budget</h1>
+  {% if disclosure_budget %}
+    <dl>
+      <div><dt>Current epoch</dt><dd>{{ disclosure_budget.epoch_number }}</dd></div>
+      <div><dt>Policy generation</dt><dd>{{ disclosure_budget.policy_generation }}</dd></div>
+      <div><dt>Approved facts used</dt><dd>{{ disclosure_budget.disclosed_fact_count }} of {{ disclosure_budget.fact_budget }}</dd></div>
+      <div><dt>Approved taxonomy used</dt><dd>{{ disclosure_budget.disclosed_taxonomy_count }} of {{ disclosure_budget.taxonomy_budget }}</dd></div>
+    </dl>
+  {% else %}
+    <p>Disclosure budget status is unavailable.</p>
+  {% endif %}
+  <p><a href="/phase-2/review">Return to local review</a></p>
+{% endblock %}

@@ -34,6 +34,7 @@ from job_search_cockpit.phase2.mutation import Phase2InstanceLock, Phase2Mutatio
 from job_search_cockpit.phase2.providers import create_provider_http_client
 from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationAttemptStore,
+    ResumePreparationError,
     ResumePreparationService,
 )
 from job_search_cockpit.phase2.shortlist import AssessmentReviewService, SqlAssessmentReviewStore
@@ -61,6 +62,7 @@ class Phase2Runtime:
     drive_http_client: httpx.Client | None
     provider_http_clients: list[httpx.Client]
     phase1_port: Phase1MatchingPort
+    verified_job_preparation_port: CatalogVerifiedJobPreparationPort
     # Wording releases are deliberately process-local and are never serialized.
     # Restarting the local app safely requires a new mapping authorization.
     local_manual_mapping_launches: dict[str, LocalManualMappingLaunch] = field(
@@ -86,6 +88,24 @@ class Phase2Runtime:
                 revision.id: revision.canonical_url
                 for revision in session.scalars(select(Phase2JobRevision))
             }
+
+    def verified_resume_job_id(self, job_revision_id: str) -> str | None:
+        with self.coordinator._session_factory() as session:
+            revision = session.get(Phase2JobRevision, job_revision_id)
+            if revision is None:
+                return None
+            job_id = revision.job_record_id
+        try:
+            authorization = self.verified_job_preparation_port.authorization_for_resume(job_id)
+        except ResumePreparationError:
+            return None
+        if (
+            authorization.job_revision_id != job_revision_id
+            or not authorization.requirement_ids
+            or not authorization.requirement_ledger_fingerprint
+        ):
+            return None
+        return job_id
 
     def close(self) -> None:
         for client in self.provider_http_clients:
@@ -181,4 +201,5 @@ def prepare_phase2_runtime(settings: Settings, phase1_port: Phase1MatchingPort) 
         drive_http_client=drive_http_client,
         provider_http_clients=provider_http_clients,
         phase1_port=phase1_port,
+        verified_job_preparation_port=preparation_port,
     )
