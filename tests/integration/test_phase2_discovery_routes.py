@@ -78,6 +78,23 @@ class _CandidateWorkflowService:
 
 
 @dataclass(slots=True)
+class _NewerRevisionWorkflow:
+    def current_candidates(self) -> tuple[CandidateReview, ...]:
+        return (
+            CandidateReview(
+                job_revision_id="eligible-newer",
+                title="Senior Product Manager",
+                employer_name="Example Employer",
+                locations=("Hyderabad",),
+                gate_result=GateResult.PASS,
+                gate_reason_codes=("profile_gate_pass",),
+                confidence=ConfidenceState.HIGH,
+                current=True,
+            ),
+        )
+
+
+@dataclass(slots=True)
 class _DurablePreparationPort:
     runtime: Phase2Runtime
     mismatch: bool = False
@@ -123,7 +140,11 @@ def _configure(prepared: PreparedVault) -> None:
 
 
 def _configure_durable_resume(
-    prepared: PreparedVault, *, expired: bool = False, mismatch: bool = False
+    prepared: PreparedVault,
+    *,
+    expired: bool = False,
+    mismatch: bool = False,
+    newer_revision: bool = False,
 ) -> None:
     _configure(prepared)
     runtime = prepared.phase2_runtime
@@ -186,8 +207,35 @@ def _configure_durable_resume(
                 phase2_activation_generation=1, phase2_restore_generation=0,
             )
         )
+        if newer_revision:
+            session.add(
+                Phase2SourceListingObservation(
+                    id="source-2", discovery_run_id="run-1", provider_id="test",
+                    provider_run_id=None, source_listing_id="listing-2",
+                    canonical_url="https://example.test/job", title="Senior Product Manager",
+                    employer_name="Example Employer", locations_json=["Hyderabad"], posted_at=None,
+                    public_description="newer public", compensation_text=None,
+                    retrieved_at=datetime.now(UTC), raw_content_fingerprint="j" * 64,
+                    content_fingerprint="k" * 64,
+                )
+            )
+            session.flush()  # type: ignore[union-attr]
+            session.add(
+                Phase2JobRevision(
+                    id="eligible-newer",
+                    job_record_id="stable-job",
+                    source_observation_id="source-2",
+                    canonical_url="https://example.test/job", title="Senior Product Manager",
+                    employer_name="Example Employer", locations_json=["Hyderabad"], posted_at=None,
+                    public_description="newer public", compensation_text=None,
+                    content_fingerprint="l" * 64,
+                    created_at=datetime.now(UTC) + timedelta(seconds=1),
+                )
+            )
 
     runtime.coordinator.run(seed, "seed_durable_resume_action")
+    if newer_revision:
+        runtime.candidate_workflow_service = _NewerRevisionWorkflow()  # type: ignore[assignment]
     runtime.verified_job_preparation_port = _DurablePreparationPort(runtime, mismatch)  # type: ignore[assignment]
 
 
@@ -246,6 +294,21 @@ def test_expired_or_mismatched_durable_authorization_hides_resume_action(
         page = app.get("/phase-2/review")
 
     assert "Prepare tailored résumé" not in _candidate_button_fragment(page.text, "eligible")
+
+
+def test_newer_durable_revision_hides_action_bound_to_stale_verification(vault_settings) -> None:
+    def configure(prepared: PreparedVault) -> None:
+        _configure_durable_resume(prepared, newer_revision=True)
+
+    with authenticated_test_app(vault_settings, configure_prepared=configure):
+        pass
+
+    with authenticated_test_app(vault_settings, configure_prepared=configure) as app:
+        page = app.get("/phase-2/review")
+
+    assert "Prepare tailored résumé" not in _candidate_button_fragment(
+        page.text, "eligible-newer"
+    )
 
 
 @pytest.mark.parametrize("choice", ("-1", "word", "3"))
