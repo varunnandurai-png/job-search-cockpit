@@ -21,6 +21,8 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1DisclosureLifecycleRequest,
     Phase1DisclosurePayloadContext,
     Phase1ManualContentReviewRequest,
+    Phase1MatchingFactResolutionRequest,
+    Phase1MatchingFactSnapshot,
     Phase1MatchingRequirementPredicate,
     Phase1MatchingRequirementQuery,
     Phase1ResumeFactProjectionRequest,
@@ -536,6 +538,7 @@ def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blo
                     manifest, attempt_id="attempt-bad-digest", nonce="nonce-bad"
                 ).model_copy(update={"logical_payload_digest": "0" * 64})
             )
+
         receipt = contract.authorize_matching_disclosure(request)
         assert contract.authorize_matching_disclosure(request) == receipt
         changed_context = request.context.model_copy(update={"nonce": "changed-nonce"})
@@ -632,6 +635,63 @@ def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blo
                 session.scalars(select(AuditEvent).where(AuditEvent.area == "matching_disclosure"))
             )
             assert len(audit_events) >= 2
+
+
+def test_released_matching_fact_resolution_rejects_forged_and_stale_references(
+    vault_settings: Settings,
+) -> None:
+    with _approved_vault(vault_settings) as coordinator:
+        contract = _contract(coordinator)
+        contract.record_acceptance(
+            acceptance_run_id="run-resolution-pass",
+            result_fingerprint="c" * 64,
+            actor="Varun",
+            confirmation="I ACCEPT THE PHASE I ACCEPTANCE RECEIPT",
+        )
+        manifest = _ready_manifest(coordinator, contract)
+        disclosure = _disclosure_request(
+            manifest, attempt_id="resolution-1", nonce="resolution-nonce"
+        )
+        authorization = contract.authorize_matching_disclosure(disclosure)
+        contract.release_matching_wording(
+            Phase1WordingReleaseRequest(
+                authorization=authorization,
+                attempt_id=disclosure.context.attempt_id,
+                nonce=disclosure.context.nonce,
+            )
+        )
+        choice = manifest.choices[0]
+        exact = Phase1MatchingFactSnapshot(
+            requirement_id=manifest.query.requirement_ids[0],
+            claim_id=choice.claim_id,
+            revision_id=choice.revision_id,
+            support_assertion_id=choice.support_assertion_id,
+        )
+
+        resolved = InternalPhase1MatchingPort(contract).resolve_released_matching_facts(
+            Phase1MatchingFactResolutionRequest(authorization=authorization, facts=(exact,))
+        )
+        assert resolved[0].canonical_key == "skills.product-delivery-one"
+        assert resolved[0].requirement_id == exact.requirement_id
+        with pytest.raises(Phase1ContractUnavailable, match="unauthorized"):
+            InternalPhase1MatchingPort(contract).resolve_released_matching_facts(
+                Phase1MatchingFactResolutionRequest(
+                    authorization=authorization,
+                    facts=(exact.model_copy(update={"claim_id": "forged-claim"}),),
+                )
+            )
+
+        contract.record_disclosure_lifecycle(
+            Phase1DisclosureLifecycleRequest(
+                authorization_id=authorization.authorization_id,
+                logical_payload_digest=authorization.logical_payload_digest,
+                state="consuming",
+            )
+        )
+        with pytest.raises(Phase1ContractUnavailable, match="replayed"):
+            InternalPhase1MatchingPort(contract).resolve_released_matching_facts(
+                Phase1MatchingFactResolutionRequest(authorization=authorization, facts=(exact,))
+            )
 
 
 def test_expiry_discovered_at_release_is_recorded_and_never_released(

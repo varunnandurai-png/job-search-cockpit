@@ -11,11 +11,14 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1AcceptanceReceiptSnapshot,
     Phase1ActivationInputs,
     Phase1DisclosureLifecycleRequest,
+    Phase1FactDisclosureAuthorizationSnapshot,
+    Phase1MatchingFactResolutionRequest,
     Phase1MatchingManifestChoice,
     Phase1MatchingRelevanceEdge,
     Phase1MatchingRequirementQuery,
     Phase1MatchingRetrievalManifest,
     Phase1ReadinessSnapshot,
+    Phase1ResolvedMatchingFactSnapshot,
     SearchProfileSnapshot,
 )
 from job_search_cockpit.phase2.assessment_types import (
@@ -87,6 +90,21 @@ class _FaultInjectingPhase1:
     ) -> Phase1MatchingRetrievalManifest:
         assert expected == self.manifest
         return expected
+
+    def resolve_released_matching_facts(
+        self, request: Phase1MatchingFactResolutionRequest
+    ) -> tuple[Phase1ResolvedMatchingFactSnapshot, ...]:
+        assert request.authorization.authorization_id == "phase1-auth-1"
+        return tuple(
+            Phase1ResolvedMatchingFactSnapshot(
+                requirement_id=item.requirement_id,
+                canonical_key="skills.product_management",
+                claim_id=item.claim_id,
+                revision_id=item.revision_id,
+                support_assertion_id=item.support_assertion_id,
+            )
+            for item in request.facts
+        )
 
     def record_disclosure_lifecycle(self, request: Phase1DisclosureLifecycleRequest) -> object:
         if request.state == "consuming":
@@ -466,6 +484,18 @@ def _recovery_service(
         manifest_fingerprint=manifest.fingerprint,
         manifest=manifest,
         phase1_authorization_id="phase1-auth-1",
+        phase1_authorization=Phase1FactDisclosureAuthorizationSnapshot(
+            authorization_id="phase1-auth-1",
+            attempt_id="attempt-1",
+            nonce_sha256="a" * 64,
+            manifest_fingerprint=manifest.fingerprint,
+            logical_payload_digest="e" * 64,
+            disclosure_budget_epoch=1,
+            disclosure_policy_generation=1,
+            state="authorized",
+            expires_at=_NOW + timedelta(minutes=5),
+            fingerprint="f" * 64,
+        ),
         authority=_WitnessAuthority(),  # type: ignore[arg-type]
         logical_payload_digest="e" * 64,
         expires_at=_NOW + timedelta(minutes=5),
@@ -786,6 +816,10 @@ def test_local_manual_mapping_attempt_schema_is_append_only(phase2_settings) -> 
             for column in inspect(engine).get_columns("phase2_local_manual_mapping_attempts")
         }
         assert {"logical_payload_digest", "manifest_fingerprint", "nonce_sha256"} <= columns
+        mapping_columns = {
+            column["name"] for column in inspect(engine).get_columns("phase2_requirement_mappings")
+        }
+        assert "canonical_fact_key" in mapping_columns
     finally:
         engine.dispose()
     with sqlite3.connect(phase2_settings.database_path) as connection:

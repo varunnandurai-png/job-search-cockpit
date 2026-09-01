@@ -12,10 +12,12 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1FactDisclosureAuthorizationSnapshot,
     Phase1ManualContentReviewReceipt,
     Phase1ManualContentReviewRequest,
+    Phase1MatchingFactResolutionRequest,
     Phase1MatchingFactSetSnapshot,
     Phase1MatchingRequirementQuery,
     Phase1MatchingRetrievalManifest,
     Phase1MatchingWordingRelease,
+    Phase1ResolvedMatchingFactSnapshot,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
     Phase1WordingReleaseRequest,
@@ -77,6 +79,11 @@ class InternalPhase1MatchingPort:
         self, expected: Phase1MatchingFactSetSnapshot
     ) -> Phase1MatchingFactSetSnapshot:
         return self._contract_service.revalidate_matching_fact_set(expected)
+
+    def resolve_released_matching_facts(
+        self, request: Phase1MatchingFactResolutionRequest
+    ) -> tuple[Phase1ResolvedMatchingFactSnapshot, ...]:
+        return self._contract_service.resolve_released_matching_facts(request)
 
     def matching_retrieval_manifest(
         self, query: Phase1MatchingRequirementQuery

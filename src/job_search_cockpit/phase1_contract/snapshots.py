@@ -295,9 +295,7 @@ class Phase1MatchingRequirementQuery(BaseModel):
     job_revision_id: str = ""
     coverage_ledger_fingerprint: str = ""
     launch_session_fingerprint: str = ""
-    requirements: tuple[Phase1MatchingRequirementPredicate, ...] = Field(
-        default=(), max_length=32
-    )
+    requirements: tuple[Phase1MatchingRequirementPredicate, ...] = Field(default=(), max_length=32)
 
     @field_validator("requirement_ids")
     @classmethod
@@ -590,6 +588,55 @@ class Phase1MatchingFactSetSnapshot(BaseModel):
     authority_generation: int
     restore_generation: int
     fingerprint: str
+
+
+class Phase1MatchingFactResolutionRequest(BaseModel):
+    """Resolve exact, already-released matching references without disclosing wording."""
+
+    model_config = ConfigDict(frozen=True)
+
+    authorization: Phase1FactDisclosureAuthorizationSnapshot
+    facts: tuple[Phase1MatchingFactSnapshot, ...] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def require_distinct_exact_references(self) -> "Phase1MatchingFactResolutionRequest":
+        refs = tuple(
+            (item.requirement_id, item.claim_id, item.revision_id, item.support_assertion_id)
+            for item in self.facts
+        )
+        if len(set(refs)) != len(refs):
+            raise ValueError("Matching fact references must be unique.")
+        if any(not item.requirement_id.startswith("job.") for item in self.facts):
+            raise ValueError("Matching fact references must use public job requirement IDs.")
+        return self
+
+
+class Phase1ResolvedMatchingFactSnapshot(BaseModel):
+    """A canonical key bound to one exact, currently approved evidence reference."""
+
+    model_config = ConfigDict(frozen=True)
+
+    requirement_id: str
+    canonical_key: str
+    claim_id: str
+    revision_id: str
+    support_assertion_id: str
+
+    @field_validator("requirement_id")
+    @classmethod
+    def validate_requirement_id(cls, value: str) -> str:
+        Phase1ResumeFactProjectionRequest.validate_requirement_ids((value,))
+        if not value.startswith("job."):
+            raise ValueError("Matching resolution requirement IDs must be public job identifiers.")
+        return value
+
+    @field_validator("canonical_key")
+    @classmethod
+    def validate_canonical_key(cls, value: str) -> str:
+        Phase1ResumeFactProjectionRequest.validate_requirement_ids((value,))
+        if value.startswith("job."):
+            raise ValueError("Resolved fact keys must not be job identifiers.")
+        return value
 
 
 class Phase1ManualContentReviewRequest(BaseModel):

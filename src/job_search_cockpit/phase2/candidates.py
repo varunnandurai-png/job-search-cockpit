@@ -18,11 +18,15 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from job_search_cockpit.phase1_contract.service import Phase1ContractUnavailable
 from job_search_cockpit.phase1_contract.snapshots import (
     Phase1ActivationInputs,
     Phase1DisclosureAuthorizationRequest,
     Phase1DisclosureLifecycleRequest,
     Phase1DisclosurePayloadContext,
+    Phase1FactDisclosureAuthorizationSnapshot,
+    Phase1MatchingFactResolutionRequest,
+    Phase1MatchingFactSnapshot,
     Phase1MatchingRequirementPredicate,
     Phase1MatchingRequirementQuery,
     Phase1MatchingRetrievalManifest,
@@ -149,6 +153,7 @@ class LocalManualMappingLaunch:
     manifest_fingerprint: str
     manifest: Phase1MatchingRetrievalManifest
     phase1_authorization_id: str
+    phase1_authorization: Phase1FactDisclosureAuthorizationSnapshot
     authority: AssessmentAuthoritySnapshot
     logical_payload_digest: str
     expires_at: datetime
@@ -236,7 +241,7 @@ class CandidateWorkflowService:
                 or not manifest.complete
             ):
                 raise CandidateWorkflowUnavailable("The approved fact set is incomplete.")
-        except ValueError as error:
+        except (Phase1ContractUnavailable, ValueError) as error:
             raise CandidateWorkflowUnavailable("The approved fact set is unavailable.") from error
         expires_at = self._now() + _TTL
         context = Phase1DisclosurePayloadContext(
@@ -330,6 +335,7 @@ class CandidateWorkflowService:
             manifest.fingerprint,
             manifest,
             authorization.authorization_id,
+            authorization,
             authority,
             digest,
             expires_at,
@@ -398,6 +404,10 @@ class CandidateWorkflowService:
             raise CandidateWorkflowUnavailable("The approved fact set changed before publication.")
         assessment_id = _assessment_id(launch)
         self._record_publication_intent(launch, assessment_id)
+        try:
+            canonical_fact_keys = self._resolve_canonical_fact_keys(launch, mappings)
+        except (Phase1ContractUnavailable, ValueError) as error:
+            raise CandidateWorkflowUnavailable("The approved evidence is unavailable.") from error
         try:
             lifecycle = self._phase1_port.record_disclosure_lifecycle(
                 Phase1DisclosureLifecycleRequest(
@@ -476,6 +486,7 @@ class CandidateWorkflowService:
                 launch.manifest.fingerprint,
                 "stable",
                 ("local_manual_mapping",),
+                canonical_fact_keys,
             )
             assessment_id = self._publication_service.publish(
                 command,
@@ -504,6 +515,40 @@ class CandidateWorkflowService:
                 "The Phase I disclosure terminal state does not match publication."
             )
         return assessment_id
+
+    def _resolve_canonical_fact_keys(
+        self,
+        launch: LocalManualMappingLaunch,
+        mappings: tuple[RequirementEvidenceMapping, ...],
+    ) -> tuple[tuple[str, str], ...]:
+        supported = tuple(
+            Phase1MatchingFactSnapshot(
+                requirement_id=item.requirement_id,
+                claim_id=cast(str, item.claim_id),
+                revision_id=cast(str, item.revision_id),
+                support_assertion_id=cast(str, item.support_assertion_id),
+            )
+            for item in mappings
+            if item.relation is not EvidenceRelation.NONE
+        )
+        if not supported:
+            return ()
+        resolved = self._phase1_port.resolve_released_matching_facts(
+            Phase1MatchingFactResolutionRequest(
+                authorization=launch.phase1_authorization, facts=supported
+            )
+        )
+        expected = {
+            (item.requirement_id, item.claim_id, item.revision_id, item.support_assertion_id)
+            for item in supported
+        }
+        actual = {
+            (item.requirement_id, item.claim_id, item.revision_id, item.support_assertion_id)
+            for item in resolved
+        }
+        if actual != expected or any(item.canonical_key.startswith("job.") for item in resolved):
+            raise CandidateWorkflowUnavailable("The approved evidence is unavailable.")
+        return tuple((item.requirement_id, item.canonical_key) for item in resolved)
 
     def _reconcile_publication(self, launch: LocalManualMappingLaunch) -> str | None:
         record, state = self._attempt(launch)
@@ -587,9 +632,7 @@ class CandidateWorkflowService:
             "expired" if self._now() >= launch.expires_at else "indeterminate"
         )
         if state not in _TERMINAL_DISCLOSURE_STATES:
-            desired = self._record_phase1_terminal(
-                launch, desired, "phase1_consuming_rejected"
-            )
+            desired = self._record_phase1_terminal(launch, desired, "phase1_consuming_rejected")
         self._terminal(
             launch.attempt_id,
             "indeterminate" if desired == "validated_response" else desired,

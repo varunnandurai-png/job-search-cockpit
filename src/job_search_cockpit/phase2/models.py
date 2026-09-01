@@ -142,9 +142,7 @@ class Phase2ApplicationDraft(Phase2Base):
     job_id: Mapped[str] = mapped_column(String(120))
     job_revision_id: Mapped[str] = mapped_column(String(120))
     final_resume_version_id: Mapped[str | None] = mapped_column(String(120))
-    state: Mapped[str] = mapped_column(
-        String(64), default="manual_review_required_no_submission"
-    )
+    state: Mapped[str] = mapped_column(String(64), default="manual_review_required_no_submission")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -153,9 +151,7 @@ class Phase2ApplicationDraftAnswer(Phase2Base):
     __table_args__ = (UniqueConstraint("application_draft_id", "reusable_answer_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    application_draft_id: Mapped[str] = mapped_column(
-        ForeignKey("phase2_application_drafts.id")
-    )
+    application_draft_id: Mapped[str] = mapped_column(ForeignKey("phase2_application_drafts.id"))
     reusable_answer_id: Mapped[str] = mapped_column(ForeignKey("phase2_reusable_answers.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -171,9 +167,7 @@ class Phase2ApplicationDraftReviewFlag(Phase2Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    application_draft_id: Mapped[str] = mapped_column(
-        ForeignKey("phase2_application_drafts.id")
-    )
+    application_draft_id: Mapped[str] = mapped_column(ForeignKey("phase2_application_drafts.id"))
     superseded_answer_id: Mapped[str] = mapped_column(ForeignKey("phase2_reusable_answers.id"))
     replacement_answer_id: Mapped[str] = mapped_column(ForeignKey("phase2_reusable_answers.id"))
     reason: Mapped[str] = mapped_column(String(64), default="approved_answer_superseded")
@@ -417,9 +411,7 @@ class Phase2SourceListingObservation(Phase2Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    discovery_run_id: Mapped[str] = mapped_column(
-        ForeignKey("phase2_discovery_runs.id")
-    )
+    discovery_run_id: Mapped[str] = mapped_column(ForeignKey("phase2_discovery_runs.id"))
     provider_id: Mapped[str] = mapped_column(String(120))
     provider_run_id: Mapped[str | None] = mapped_column(String(120))
     source_listing_id: Mapped[str] = mapped_column(String(240))
@@ -536,9 +528,7 @@ class Phase2MatchAssessment(AssessmentAuthorityFence, Phase2Base):
     qualified_band: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="unbound"
     )
-    critical_floors_pass: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="0"
-    )
+    critical_floors_pass: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
     meaningful_role_and_responsibility: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="0"
     )
@@ -580,6 +570,7 @@ class Phase2RequirementMapping(AssessmentAuthorityFence, Phase2Base):
     claim_id: Mapped[str | None] = mapped_column(String(120))
     fact_revision_id: Mapped[str | None] = mapped_column(String(120))
     support_assertion_id: Mapped[str | None] = mapped_column(String(120))
+    canonical_fact_key: Mapped[str | None] = mapped_column(String(255))
     relation: Mapped[str] = mapped_column(String(16))
     reason_code: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

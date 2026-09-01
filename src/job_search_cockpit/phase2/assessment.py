@@ -69,6 +69,7 @@ class AssessmentPublicationCommand:
     fact_set_fingerprint: str
     assessment_state: str
     shortlist_reason_codes: tuple[str, ...]
+    canonical_fact_keys: tuple[tuple[str, str], ...] = ()
 
     def validate(self) -> None:
         if not 1 <= len(self.rubric_version.strip()) <= 64:
@@ -96,6 +97,18 @@ class AssessmentPublicationCommand:
             raise ValueError("publication mapping must reference a published requirement")
         if set(mapping_ids) != set(requirement_ids) or len(set(mapping_ids)) != len(mapping_ids):
             raise ValueError("every published requirement needs one evidence mapping")
+        keys = dict(self.canonical_fact_keys)
+        if len(keys) != len(self.canonical_fact_keys) or any(
+            not key or key.startswith("job.") for key in keys.values()
+        ):
+            raise ValueError("published canonical fact keys are invalid")
+        if keys:
+            for mapping in self.mappings:
+                if mapping.relation is EvidenceRelation.NONE:
+                    if mapping.requirement_id in keys:
+                        raise ValueError("unsupported mappings cannot carry canonical fact keys")
+                elif mapping.requirement_id not in keys:
+                    raise ValueError("supported mappings need a canonical fact key")
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +285,7 @@ class AssessmentPublicationService:
             requirements = {
                 requirement.requirement_id: requirement for requirement in command.requirements
             }
+            canonical_keys = dict(command.canonical_fact_keys)
             for mapping in command.mappings:
                 requirement = requirements[mapping.requirement_id]
                 session.add(
@@ -287,6 +301,7 @@ class AssessmentPublicationService:
                         claim_id=mapping.claim_id,
                         fact_revision_id=mapping.revision_id,
                         support_assertion_id=mapping.support_assertion_id,
+                        canonical_fact_key=canonical_keys.get(mapping.requirement_id),
                         relation=mapping.relation.value,
                         reason_code=mapping.reason_code,
                         **fields,

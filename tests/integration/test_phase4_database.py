@@ -28,7 +28,7 @@ def test_phase4_backup_metadata_is_append_only_and_excludes_sensitive_values(
 
     with sqlite3.connect(phase2_settings.database_path) as connection:
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (
-            "0018_local_manual_mapping_attempts",
+            "0019_mapping_canonical_fact_keys",
         )
         available_tables = {
             row[0]

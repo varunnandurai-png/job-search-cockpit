@@ -30,6 +30,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1FactDisclosureAuthorizationSnapshot,
     Phase1ManualContentReviewReceipt,
     Phase1ManualContentReviewRequest,
+    Phase1MatchingFactResolutionRequest,
     Phase1MatchingFactSetSnapshot,
     Phase1MatchingFactSnapshot,
     Phase1MatchingManifestChoice,
@@ -39,6 +40,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1MatchingRetrievalManifest,
     Phase1MatchingWordingRelease,
     Phase1ReadinessSnapshot,
+    Phase1ResolvedMatchingFactSnapshot,
     Phase1ResumeFactProjection,
     Phase1ResumeFactProjectionRequest,
     Phase1ResumeFactSnapshot,
@@ -381,6 +383,85 @@ class Phase1ContractService:
         if current != expected:
             raise Phase1ContractUnavailable("The Phase I matching fact set changed.")
         return current
+
+    def resolve_released_matching_facts(
+        self, request: Phase1MatchingFactResolutionRequest
+    ) -> tuple[Phase1ResolvedMatchingFactSnapshot, ...]:
+        """Resolve selected opaque references only while their disclosure remains usable."""
+        expected = request.authorization
+        factory = session_factory_for(self._coordinator.engine)
+        with factory() as session:
+            authorization = session.get(
+                Phase1FactDisclosureAuthorization, expected.authorization_id
+            )
+            if (
+                authorization is None
+                or self._authorization_snapshot(session, authorization) != expected
+            ):
+                raise Phase1ContractUnavailable(
+                    "The disclosure authorization changed or was replayed."
+                )
+            expires_at = authorization.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expected.state != "authorized" or expires_at <= datetime.now(UTC):
+                raise Phase1ContractUnavailable("The disclosure authorization is unavailable.")
+            released = session.scalar(
+                select(Phase1FactDisclosureReleaseEvent.id).where(
+                    Phase1FactDisclosureReleaseEvent.authorization_id == authorization.id,
+                    Phase1FactDisclosureReleaseEvent.logical_payload_digest
+                    == authorization.logical_payload_digest,
+                )
+            )
+            if released is None:
+                raise Phase1ContractUnavailable("The matching choice was not released.")
+            preflight = session.get(Phase1MatchingRetrievalPreflight, authorization.preflight_id)
+            if preflight is None:
+                raise Phase1ContractUnavailable("The retrieval preflight is unavailable.")
+            manifest = Phase1MatchingRetrievalManifest.model_validate(preflight.manifest_json)
+            if manifest.fingerprint != authorization.manifest_fingerprint or not manifest.complete:
+                raise Phase1ContractUnavailable("The authorized matching facts changed.")
+            choices = {
+                (item.claim_id, item.revision_id, item.support_assertion_id)
+                for item in manifest.choices
+            }
+            edges = {(item.requirement_id, item.claim_id) for item in manifest.edges}
+            resolved: list[Phase1ResolvedMatchingFactSnapshot] = []
+            for item in request.facts:
+                reference = (item.claim_id, item.revision_id, item.support_assertion_id)
+                if reference not in choices or (item.requirement_id, item.claim_id) not in edges:
+                    raise Phase1ContractUnavailable(
+                        "The matching evidence reference is unauthorized."
+                    )
+                claim = session.get(Claim, item.claim_id)
+                revision = session.get(ClaimRevision, item.revision_id)
+                support = session.get(ClaimSupportAssertion, item.support_assertion_id)
+                if (
+                    claim is None
+                    or revision is None
+                    or support is None
+                    or claim.active_revision_id != revision.id
+                    or revision.claim_id != claim.id
+                    or support.claim_id != claim.id
+                    or support.revision_id != revision.id
+                    or not is_resume_eligible(
+                        session, claim.id, revision.id, named_use_id=""
+                    ).allowed
+                    or support.support_state != "supported"
+                ):
+                    raise Phase1ContractUnavailable(
+                        "The matching evidence reference is unavailable."
+                    )
+                resolved.append(
+                    Phase1ResolvedMatchingFactSnapshot(
+                        requirement_id=item.requirement_id,
+                        canonical_key=claim.canonical_key,
+                        claim_id=claim.id,
+                        revision_id=revision.id,
+                        support_assertion_id=support.id,
+                    )
+                )
+        return tuple(resolved)
 
     def snapshot_matching_retrieval_manifest(
         self, query: Phase1MatchingRequirementQuery
