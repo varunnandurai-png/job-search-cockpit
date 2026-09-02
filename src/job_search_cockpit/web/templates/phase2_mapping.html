@@ -6,9 +6,11 @@
   <p>These approved Phase I facts are transient for this mapping only. Do not copy them into a job record.</p>
   <form method="post" action="/phase-2/mapping-attempts/{{ launch.attempt_id }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% for requirement in launch.requirements %}
+    {% for item in mapping_requirements %}
+      {% set requirement = item.requirement %}
       <fieldset>
-        <legend>Requirement {{ requirement.requirement_id }}</legend>
+        <legend>{{ item.text }}</legend>
+        <p>{{ item.citation }}</p>
         <label for="relation-{{ loop.index }}">Relation</label>
         <select id="relation-{{ loop.index }}" name="relation:{{ requirement.requirement_id }}" required>
           <option value="direct">Direct</option>
@@ -24,8 +26,8 @@
         <label for="choice-{{ loop.index }}">Approved Phase I fact</label>
         <select id="choice-{{ loop.index }}" name="choice:{{ requirement.requirement_id }}">
           <option value="">No approved evidence</option>
-          {% for choice in launch.choices %}
-            <option value="{{ loop.index0 }}">{{ choice[4] }}</option>
+          {% for choice in item.choices %}
+            <option value="{{ choice[0] }}">{{ choice[1] }}</option>
           {% endfor %}
         </select>
       </fieldset>

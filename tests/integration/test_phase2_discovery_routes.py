@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from job_search_cockpit.phase1_contract.snapshots import Phase1MatchingRelevanceEdge
 from job_search_cockpit.phase2.assessment_types import (
     ConfidenceState,
     EvidenceRelation,
@@ -63,6 +64,7 @@ class _CandidateWorkflowService:
                 gate_reason_codes=("profile_gate_pass",),
                 confidence=ConfidenceState.HIGH,
                 current=True,
+                selected_location_path="Hyderabad",
             ),
             CandidateReview(
                 job_revision_id="ineligible",
@@ -90,6 +92,7 @@ class _NewerRevisionWorkflow:
                 gate_reason_codes=("profile_gate_pass",),
                 confidence=ConfidenceState.HIGH,
                 current=True,
+                selected_location_path="Hyderabad",
             ),
         )
 
@@ -336,6 +339,128 @@ def test_mapping_selection_rejects_noncanonical_or_out_of_range_choice(choice: s
                 "choice:skills.product_management": choice,
             },
         )
+
+
+def test_mapping_page_renders_public_clause_citation_and_only_edge_choices(
+    vault_settings,
+) -> None:
+    requirement_one = Requirement(
+        "job.revision.requirement.one",
+        RequirementKind.REQUIRED,
+        ScoringComponent.ROLE,
+        "job.revision.span.0",
+        0,
+        24,
+    )
+    requirement_two = Requirement(
+        "job.revision.requirement.two",
+        RequirementKind.PREFERRED,
+        ScoringComponent.TECHNICAL,
+        "job.revision.span.1",
+        26,
+        45,
+    )
+
+    def configure(prepared: PreparedVault) -> None:
+        runtime = prepared.phase2_runtime
+        assert isinstance(runtime, Phase2Runtime)
+        runtime.local_manual_mapping_launches["attempt-view"] = SimpleNamespace(
+            attempt_id="attempt-view",
+            requirements=(requirement_one, requirement_two),
+            public_requirement_texts=(
+                (requirement_one.requirement_id, "You must own the roadmap"),
+                (requirement_two.requirement_id, "Python is preferred"),
+            ),
+            choices=(
+                (
+                    "skills.roadmap",
+                    "claim-roadmap",
+                    "revision-roadmap",
+                    "support-roadmap",
+                    "Owned roadmaps",
+                ),
+                (
+                    "skills.python",
+                    "claim-python",
+                    "revision-python",
+                    "support-python",
+                    "Used Python",
+                ),
+                (
+                    "skills.unrelated",
+                    "claim-unrelated",
+                    "revision-unrelated",
+                    "support-unrelated",
+                    "Unrelated private choice",
+                ),
+            ),
+            manifest=SimpleNamespace(
+                edges=(
+                    Phase1MatchingRelevanceEdge(
+                        requirement_id=requirement_one.requirement_id,
+                        claim_id="claim-roadmap",
+                        matched_taxonomy_ids=("role_profile.senior_product_manager",),
+                    ),
+                    Phase1MatchingRelevanceEdge(
+                        requirement_id=requirement_two.requirement_id,
+                        claim_id="claim-python",
+                        matched_taxonomy_ids=("technical_object.platform",),
+                    ),
+                )
+            ),
+        )
+
+    with authenticated_test_app(vault_settings, configure_prepared=configure) as app:
+        page = app.get("/phase-2/mapping-attempts/attempt-view")
+
+    first = page.text.split("You must own the roadmap", 1)[1].split("</fieldset>", 1)[0]
+    second = page.text.split("Python is preferred", 1)[1].split("</fieldset>", 1)[0]
+    assert "job.revision.span.0" in first
+    assert "characters 0-24" in first
+    assert "Owned roadmaps" in first
+    assert "Used Python" not in first
+    assert "Used Python" in second
+    assert "Owned roadmaps" not in second
+    assert "Unrelated private choice" not in page.text
+
+
+def test_mapping_start_uses_the_profile_approved_listing_location(vault_settings) -> None:
+    captured: list[str] = []
+
+    class Workflow(_CandidateWorkflowService):
+        def current_candidates(self) -> tuple[CandidateReview, ...]:
+            return (
+                CandidateReview(
+                    job_revision_id="eligible",
+                    title="Senior Product Manager",
+                    employer_name="Example Employer",
+                    locations=("London", "Hyderabad"),
+                    gate_result=GateResult.PASS,
+                    gate_reason_codes=("profile_gate_pass",),
+                    confidence=ConfidenceState.HIGH,
+                    current=True,
+                    selected_location_path="Hyderabad",
+                ),
+            )
+
+        def begin_local_manual_mapping(self, _revision_id: str, location: str) -> object:
+            captured.append(location)
+            return SimpleNamespace(attempt_id="attempt-location")
+
+    def configure(prepared: PreparedVault) -> None:
+        runtime = prepared.phase2_runtime
+        assert isinstance(runtime, Phase2Runtime)
+        runtime.candidate_workflow_service = Workflow()  # type: ignore[assignment]
+
+    with authenticated_test_app(vault_settings, configure_prepared=configure) as app:
+        response = app.post(
+            "/phase-2/mapping-attempts",
+            data={"job_revision_id": "eligible"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert captured == ["Hyderabad"]
 
 
 def test_disclosure_budget_is_authenticated_no_store_and_renewal_rejects_wrong_confirmation(

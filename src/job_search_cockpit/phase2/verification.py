@@ -96,6 +96,12 @@ class VerifiedJobAuthorizationService:
             revision = session.get(Phase2JobRevision, command.job_revision_id)
             if revision is None:
                 raise ResumePreparationError("The job revision is unavailable for verification.")
+            if command.selected_location_path.strip() not in {
+                str(location) for location in revision.locations_json
+            }:
+                raise ResumePreparationError(
+                    "The selected location path does not belong to the job listing."
+                )
             observation = session.get(
                 Phase2SourceListingObservation, revision.source_observation_id
             )
@@ -128,6 +134,30 @@ class VerifiedJobAuthorizationService:
 
         return self._coordinator.run(record, "verify_phase2_job", actor=command.actor)
 
+    def mapping_ready_job_revision_ids(self) -> set[str]:
+        """Derive current mapped state from durable, revalidated evidence."""
+        view = self._activation_service.revalidate_before(Phase2Action.VERIFICATION)
+        expected_phase1 = self._phase1_port.activation_inputs()
+        self._phase1_port.revalidate_activation_inputs(expected_phase1)
+        ready: set[str] = set()
+        with self._coordinator._session_factory() as session:
+            revisions = tuple(session.scalars(select(Phase2JobRevision)))
+            for revision in revisions:
+                if self._is_stale(session, revision):
+                    continue
+                try:
+                    self._validated_assessment_evidence(
+                        session,
+                        revision,
+                        expected_phase1,
+                        view,
+                        require_direct_mandatory=True,
+                    )
+                except ResumePreparationError:
+                    continue
+                ready.add(revision.id)
+        return ready
+
     def _issue_requirement_ledger(
         self,
         session: Session,
@@ -136,6 +166,54 @@ class VerifiedJobAuthorizationService:
         expected_phase1: Phase1ActivationInputs,
         view: Phase2ActivationView,
     ) -> Phase2ResumeRequirementLedger:
+        phase2_fields = {
+            "phase2_activation_generation": view.activation_generation,
+            "phase2_restore_generation": view.restore_generation,
+        }
+        assessment, mappings, canonical_keys = self._validated_assessment_evidence(
+            session,
+            revision,
+            expected_phase1,
+            view,
+            require_direct_mandatory=True,
+        )
+        fingerprint = _requirement_ledger_fingerprint(
+            revision.id, assessment, mappings, canonical_keys, phase2_fields
+        )
+        existing = session.scalar(
+            select(Phase2ResumeRequirementLedger).where(
+                Phase2ResumeRequirementLedger.job_revision_id == revision.id,
+                Phase2ResumeRequirementLedger.requirement_ledger_fingerprint == fingerprint,
+            )
+        )
+        if existing is not None:
+            return existing
+        ledger = Phase2ResumeRequirementLedger(
+            id=str(uuid4()),
+            job_id=job.id,
+            job_revision_id=revision.id,
+            requirement_ids_json=list(canonical_keys),
+            requirement_ledger_fingerprint=fingerprint,
+            phase2_activation_generation=phase2_fields["phase2_activation_generation"],
+            phase2_restore_generation=phase2_fields["phase2_restore_generation"],
+        )
+        session.add(ledger)
+        session.flush()
+        return ledger
+
+    def _validated_assessment_evidence(
+        self,
+        session: Session,
+        revision: Phase2JobRevision,
+        expected_phase1: Phase1ActivationInputs,
+        view: Phase2ActivationView,
+        *,
+        require_direct_mandatory: bool,
+    ) -> tuple[
+        Phase2MatchAssessment,
+        tuple[Phase2RequirementMapping, ...],
+        tuple[str, ...],
+    ]:
         fields = _phase1_fields(expected_phase1)
         phase2_fields = {
             "phase2_activation_generation": view.activation_generation,
@@ -196,64 +274,28 @@ class VerifiedJobAuthorizationService:
         required = [
             item for item in mappings if item.requirement_kind == RequirementKind.REQUIRED.value
         ]
-        if any(item.relation != EvidenceRelation.DIRECT.value for item in required):
+        if require_direct_mandatory and any(
+            item.relation != EvidenceRelation.DIRECT.value for item in required
+        ):
             raise ResumePreparationError("The job has an unsupported mandatory requirement.")
         supported = tuple(item for item in mappings if item.relation != EvidenceRelation.NONE.value)
-        if not supported:
+        if require_direct_mandatory and not supported:
             raise ResumePreparationError("The job assessment mappings are unavailable.")
         canonical_keys = tuple(dict.fromkeys(str(item.canonical_fact_key) for item in supported))
-        try:
-            projection = self._phase1_port.resume_fact_projection(
-                Phase1ResumeFactProjectionRequest(requirement_ids=canonical_keys)
-            )
-            if self._phase1_port.revalidate_resume_fact_projection(projection) != projection:
-                raise ValueError
-        except (Phase1ContractUnavailable, ValueError) as error:
-            raise ResumePreparationError("The approved evidence is unavailable.") from error
-        if _projection_fields(projection) != fields or not _matches_projection(
-            supported, projection
-        ):
-            raise ResumePreparationError("The approved evidence is unavailable.")
-        fingerprint = canonical_fingerprint(
-            {
-                "job_revision_id": revision.id,
-                "assessment_id": assessment.id,
-                "assessment_fingerprint": assessment.fact_set_fingerprint,
-                "mappings": [
-                    {
-                        "requirement_id": item.requirement_id,
-                        "relation": item.relation,
-                        "claim_id": item.claim_id,
-                        "revision_id": item.fact_revision_id,
-                        "support_assertion_id": item.support_assertion_id,
-                        "canonical_key": item.canonical_fact_key,
-                    }
-                    for item in mappings
-                ],
-                "canonical_keys": canonical_keys,
-                "phase2_generations": phase2_fields,
-            }
-        )
-        existing = session.scalar(
-            select(Phase2ResumeRequirementLedger).where(
-                Phase2ResumeRequirementLedger.job_revision_id == revision.id,
-                Phase2ResumeRequirementLedger.requirement_ledger_fingerprint == fingerprint,
-            )
-        )
-        if existing is not None:
-            return existing
-        ledger = Phase2ResumeRequirementLedger(
-            id=str(uuid4()),
-            job_id=job.id,
-            job_revision_id=revision.id,
-            requirement_ids_json=list(canonical_keys),
-            requirement_ledger_fingerprint=fingerprint,
-            phase2_activation_generation=phase2_fields["phase2_activation_generation"],
-            phase2_restore_generation=phase2_fields["phase2_restore_generation"],
-        )
-        session.add(ledger)
-        session.flush()
-        return ledger
+        if supported:
+            try:
+                projection = self._phase1_port.resume_fact_projection(
+                    Phase1ResumeFactProjectionRequest(requirement_ids=canonical_keys)
+                )
+                if self._phase1_port.revalidate_resume_fact_projection(projection) != projection:
+                    raise ValueError
+            except (Phase1ContractUnavailable, ValueError) as error:
+                raise ResumePreparationError("The approved evidence is unavailable.") from error
+            if _projection_fields(projection) != fields or not _matches_projection(
+                supported, projection
+            ):
+                raise ResumePreparationError("The approved evidence is unavailable.")
+        return assessment, mappings, canonical_keys
 
     @staticmethod
     def _assert_location_path(location_path: str, inputs: Phase1ActivationInputs) -> None:
@@ -350,7 +392,8 @@ class CatalogVerifiedJobPreparationPort:
         try:
             view = self._activation_service.revalidate_before(Phase2Action.VERIFICATION)
             inputs = self._phase1_port.activation_inputs()
-        except Phase2ActivationUnavailable as error:
+            self._phase1_port.revalidate_activation_inputs(inputs)
+        except (Phase1ContractUnavailable, Phase2ActivationUnavailable, ValueError) as error:
             raise ResumePreparationError("verified job readiness is unavailable") from error
         if _phase1_fields(inputs) != {
             "phase1_profile_fingerprint": verification.phase1_profile_fingerprint,
@@ -363,6 +406,46 @@ class CatalogVerifiedJobPreparationPort:
         } or (
             view.activation_generation != verification.phase2_activation_generation
             or view.restore_generation != verification.phase2_restore_generation
+        ):
+            raise ResumePreparationError("verified job readiness is unavailable")
+        if self._coordinator is None or ledger is None:
+            raise ResumePreparationError("verified job readiness is unavailable")
+        validator = VerifiedJobAuthorizationService(
+            self._phase1_port, self._activation_service, self._coordinator
+        )
+        with self._coordinator._session_factory() as session:
+            current_revision = session.get(Phase2JobRevision, revision.id)
+            observation = session.get(
+                Phase2SourceListingObservation, revision.source_observation_id
+            )
+            if (
+                current_revision is None
+                or validator._is_stale(session, current_revision)
+                or observation is None
+                or observation.content_fingerprint != verification.source_observation_fingerprint
+            ):
+                raise ResumePreparationError("verified job readiness is unavailable")
+            assessment, mappings, canonical_keys = validator._validated_assessment_evidence(
+                session,
+                current_revision,
+                inputs,
+                view,
+                require_direct_mandatory=True,
+            )
+            phase2_fields = {
+                "phase2_activation_generation": view.activation_generation,
+                "phase2_restore_generation": view.restore_generation,
+            }
+            expected_fingerprint = _requirement_ledger_fingerprint(
+                revision.id, assessment, mappings, canonical_keys, phase2_fields
+            )
+        if (
+            ledger.job_id != job.id
+            or ledger.job_revision_id != revision.id
+            or tuple(str(item) for item in ledger.requirement_ids_json) != canonical_keys
+            or ledger.requirement_ledger_fingerprint != expected_fingerprint
+            or ledger.phase2_activation_generation != view.activation_generation
+            or ledger.phase2_restore_generation != view.restore_generation
         ):
             raise ResumePreparationError("verified job readiness is unavailable")
         return _authorization(job.id, verification, revision, ledger)
@@ -408,6 +491,35 @@ def _matches_projection(
         )
         in facts
         for mapping in mappings
+    )
+
+
+def _requirement_ledger_fingerprint(
+    job_revision_id: str,
+    assessment: Phase2MatchAssessment,
+    mappings: tuple[Phase2RequirementMapping, ...],
+    canonical_keys: tuple[str, ...],
+    phase2_fields: dict[str, int],
+) -> str:
+    return canonical_fingerprint(
+        {
+            "job_revision_id": job_revision_id,
+            "assessment_id": assessment.id,
+            "assessment_fingerprint": assessment.fact_set_fingerprint,
+            "mappings": [
+                {
+                    "requirement_id": item.requirement_id,
+                    "relation": item.relation,
+                    "claim_id": item.claim_id,
+                    "revision_id": item.fact_revision_id,
+                    "support_assertion_id": item.support_assertion_id,
+                    "canonical_key": item.canonical_fact_key,
+                }
+                for item in mappings
+            ],
+            "canonical_keys": canonical_keys,
+            "phase2_generations": phase2_fields,
+        }
     )
 
 

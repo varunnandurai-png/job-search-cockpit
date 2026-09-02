@@ -53,3 +53,10 @@ def test_ambiguous_clause_is_conservative_and_blocks_manual_scoring() -> None:
 def test_extraction_refuses_missing_public_description() -> None:
     with pytest.raises(CandidateWorkflowUnavailable, match="description"):
         extract_public_requirements(_revision(""))
+
+
+def test_extraction_blocks_a_listing_with_more_than_thirty_two_clauses() -> None:
+    description = ". ".join(f"Requirement {index} is required" for index in range(33)) + "."
+
+    with pytest.raises(CandidateWorkflowUnavailable, match="32"):
+        extract_public_requirements(_revision(description))

@@ -875,7 +875,9 @@ class Phase1ContractService:
                 reason_code = "disclosure_taxonomy_budget_exhausted"
 
             authorization = Phase1FactDisclosureAuthorization(
-                id=str(uuid4()),
+                # Phase II chooses this opaque identifier and durably records the
+                # digest binding before crossing the disclosure boundary.
+                id=request.context.phase2_authorization_id,
                 attempt_id=request.context.attempt_id,
                 packet_id=request.context.packet_id,
                 nonce_sha256=nonce_sha256,

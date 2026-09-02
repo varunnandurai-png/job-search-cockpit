@@ -235,7 +235,7 @@ async def begin_mapping(request: Request) -> Response:
         return RedirectResponse("/phase-2/review", status_code=303)
     try:
         launch = runtime.candidate_workflow_service.begin_local_manual_mapping(
-            revision_id, candidate.locations[0]
+            revision_id, candidate.selected_location_path or ""
         )
     except (CandidateWorkflowUnavailable, Phase2ActivationUnavailable, ValueError, IndexError):
         return RedirectResponse("/phase-2/review", status_code=303)
@@ -252,7 +252,11 @@ def mapping_page(request: Request, attempt_id: str) -> Response:
     response: Response = request.app.state.templates.TemplateResponse(
         request,
         "phase2_mapping.html",
-        {"csrf_token": request.app.state.launch_session.csrf_token, "launch": launch},
+        {
+            "csrf_token": request.app.state.launch_session.csrf_token,
+            "launch": launch,
+            "mapping_requirements": _mapping_requirement_views(launch),
+        },
     )
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -273,7 +277,6 @@ async def publish_mapping(request: Request, attempt_id: str) -> Response:
     except (CandidateWorkflowUnavailable, Phase2ActivationUnavailable, ValueError):
         return RedirectResponse(f"/phase-2/mapping-attempts/{launch.attempt_id}", status_code=303)
     runtime.forget_local_manual_mapping(launch.attempt_id)
-    runtime.mark_locally_mapped(launch.job_revision_id)
     return RedirectResponse("/phase-2/review", status_code=303)
 
 
@@ -302,6 +305,30 @@ def _mapping_selections(
             LocalManualMappingSelection(key, relation, reason, choice[1], choice[2], choice[3])
         )
     return tuple(selections)
+
+
+def _mapping_requirement_views(launch: LocalManualMappingLaunch) -> tuple[dict[str, object], ...]:
+    public_text = dict(getattr(launch, "public_requirement_texts", ()))
+    edges = {
+        (edge.requirement_id, edge.claim_id)
+        for edge in launch.manifest.edges
+    }
+    return tuple(
+        {
+            "requirement": requirement,
+            "text": public_text.get(requirement.requirement_id, ""),
+            "citation": (
+                f"{requirement.source_span_id} · characters "
+                f"{requirement.start_offset}-{requirement.end_offset}"
+            ),
+            "choices": tuple(
+                (index, choice[4])
+                for index, choice in enumerate(launch.choices)
+                if (requirement.requirement_id, choice[1]) in edges
+            ),
+        }
+        for requirement in launch.requirements
+    )
 
 
 @router.post("/phase-2/disclosure-epochs")
@@ -523,7 +550,7 @@ async def verify_candidate(request: Request) -> Response:
                 runtime.verified_job_authorization_service.verify(
                     VerifyCandidateCommand(
                         job_revision_id=revision_id,
-                        selected_location_path=candidate.locations[0],
+                        selected_location_path=candidate.selected_location_path or "",
                         actor="Varun",
                         reason=_bounded(form.get("reason"), 500),
                         confirmation=str(form.get("confirmation", "")),

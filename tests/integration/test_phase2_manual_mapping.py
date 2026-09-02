@@ -14,9 +14,11 @@ from job_search_cockpit.phase1_contract.snapshots import (
     Phase1FactDisclosureAuthorizationSnapshot,
     Phase1MatchingFactResolutionRequest,
     Phase1MatchingManifestChoice,
+    Phase1MatchingReleasedChoice,
     Phase1MatchingRelevanceEdge,
     Phase1MatchingRequirementQuery,
     Phase1MatchingRetrievalManifest,
+    Phase1MatchingWordingRelease,
     Phase1ReadinessSnapshot,
     Phase1ResolvedMatchingFactSnapshot,
     SearchProfileSnapshot,
@@ -550,6 +552,159 @@ def _attempt_state(coordinator: Phase2MutationCoordinator) -> str:
                 .order_by(Phase2LocalManualMappingAttemptEvent.sequence.desc())
             )
         )
+
+
+def test_phase2_attempt_and_recovery_binding_exist_before_phase1_authorization(
+    phase2_settings,
+) -> None:
+    upgrade_phase2_database(f"sqlite:///{phase2_settings.database_path}")
+    engine = create_phase2_engine(phase2_settings)
+    lock = Phase2InstanceLock.acquire(phase2_settings)
+    coordinator = Phase2MutationCoordinator(phase2_settings, engine, lock)
+    revision = _seed_candidate(coordinator)
+    inputs = _phase1_inputs().model_copy(
+        update={
+            "profile": _phase1_inputs().profile.model_copy(
+                update={
+                    "payload": _phase1_inputs().profile.payload.model_copy(
+                        update={"eligible_roles": (revision.title,)}
+                    )
+                }
+            )
+        }
+    )
+    view = Phase2ActivationView("active", "", 1, 0, 0, "receipt-1", 1)
+
+    class Activation:
+        def revalidate_before(self, _action: object) -> Phase2ActivationView:
+            return view
+
+    class Publication:
+        def capture_authority(self) -> _WitnessAuthority:
+            return _WitnessAuthority()
+
+    class Phase1:
+        manifest: Phase1MatchingRetrievalManifest | None = None
+
+        def activation_inputs(self) -> Phase1ActivationInputs:
+            return inputs
+
+        def matching_retrieval_manifest(
+            self, query: Phase1MatchingRequirementQuery
+        ) -> Phase1MatchingRetrievalManifest:
+            requirement_id = query.requirement_ids[0]
+            choice = Phase1MatchingManifestChoice(
+                claim_id="claim-1",
+                revision_id="fact-revision-1",
+                support_assertion_id="support-1",
+                safe_wording_sha256="f" * 64,
+            )
+            self.manifest = Phase1MatchingRetrievalManifest(
+                query=query,
+                query_fingerprint="a" * 64,
+                choices=(choice,),
+                edges=(
+                    Phase1MatchingRelevanceEdge(
+                        requirement_id=requirement_id,
+                        claim_id=choice.claim_id,
+                        matched_taxonomy_ids=("role_profile.senior_product_manager",),
+                    ),
+                ),
+                candidate_universe_count=1,
+                examined_count=1,
+                omission_reason_counts=(),
+                complete=True,
+                structural_state="complete",
+                semantic_state="complete",
+                eligible_set_fingerprint="b" * 64,
+                profile_fingerprint="a" * 64,
+                profile_generation=1,
+                readiness_fingerprint="b" * 64,
+                readiness_generation=1,
+                authority_fingerprint="c" * 64,
+                authority_generation=1,
+                restore_generation=0,
+                disclosure_budget_epoch=1,
+                disclosure_policy_generation=1,
+                fingerprint="d" * 64,
+            )
+            return self.manifest
+
+        def revalidate_matching_retrieval_manifest(
+            self, expected: Phase1MatchingRetrievalManifest
+        ) -> Phase1MatchingRetrievalManifest:
+            return expected
+
+        def authorize_matching_disclosure(
+            self, request: object
+        ) -> Phase1FactDisclosureAuthorizationSnapshot:
+            attempt_id = request.context.attempt_id  # type: ignore[union-attr]
+            with coordinator._session_factory() as session:
+                stored = session.scalar(
+                    select(Phase2LocalManualMappingAttempt).where(
+                        Phase2LocalManualMappingAttempt.attempt_id == attempt_id
+                    )
+                )
+            assert stored is not None
+            assert stored.logical_payload_digest == request.logical_payload_digest  # type: ignore[union-attr]
+            assert any(
+                entry.event.event_type == "local_manual_mapping_authorized"
+                and entry.event.payload.get("attempt_id") == attempt_id
+                for entry in coordinator.recovery_ledger.read_all()
+            )
+            return Phase1FactDisclosureAuthorizationSnapshot(
+                authorization_id=request.context.phase2_authorization_id,  # type: ignore[union-attr]
+                attempt_id=attempt_id,
+                nonce_sha256="a" * 64,
+                manifest_fingerprint=request.context.manifest_fingerprint,  # type: ignore[union-attr]
+                logical_payload_digest=request.logical_payload_digest,  # type: ignore[union-attr]
+                disclosure_budget_epoch=1,
+                disclosure_policy_generation=1,
+                state="authorized",
+                expires_at=request.context.expires_at,  # type: ignore[union-attr]
+                fingerprint="f" * 64,
+            )
+
+        def release_matching_wording(self, request: object) -> Phase1MatchingWordingRelease:
+            assert self.manifest is not None
+            choice = self.manifest.choices[0]
+            return Phase1MatchingWordingRelease(
+                authorization_id=request.authorization.authorization_id,  # type: ignore[union-attr]
+                logical_payload_digest=request.authorization.logical_payload_digest,  # type: ignore[union-attr]
+                manifest_fingerprint=self.manifest.fingerprint,
+                choices=(
+                    Phase1MatchingReleasedChoice(
+                        canonical_key="skills.product_management",
+                        claim_id=choice.claim_id,
+                        revision_id=choice.revision_id,
+                        support_assertion_id=choice.support_assertion_id,
+                        safe_wording="Approved product management evidence",
+                        safe_wording_sha256=choice.safe_wording_sha256,
+                    ),
+                ),
+                edges=self.manifest.edges,
+                fingerprint="1" * 64,
+            )
+
+    service = CandidateWorkflowService(
+        Phase1(),  # type: ignore[arg-type]
+        Activation(),  # type: ignore[arg-type]
+        coordinator,
+        Publication(),  # type: ignore[arg-type]
+        now=lambda: _NOW,
+    )
+    try:
+        first = service.begin_local_manual_mapping(revision.id, "Hyderabad")
+        retry = service.begin_local_manual_mapping(revision.id, "Hyderabad")
+        assert first.phase1_authorization_id == first.attempt_id
+        assert retry.attempt_id != first.attempt_id
+        assert retry.nonce != first.nonce
+        assert retry.logical_payload_digest != first.logical_payload_digest
+        assert retry.manifest_fingerprint == first.manifest_fingerprint
+        assert retry.manifest.query == first.manifest.query
+    finally:
+        coordinator.dispose()
+        lock.release()
 
 
 def test_failure_before_phase1_consuming_seals_both_stores_and_denies_replay(

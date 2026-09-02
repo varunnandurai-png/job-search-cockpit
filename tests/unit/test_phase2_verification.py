@@ -244,6 +244,7 @@ def _seed(
                 confidence="high",
                 assessment_state="stable",
                 fact_set_fingerprint="j" * 64,
+                created_at=_NOW,
                 **_FENCE,
             )
         )
@@ -297,6 +298,60 @@ def test_verification_issues_only_canonical_phase1_keys_in_first_requirement_ord
         assert len(ledgers) == 1
         assert ledgers[0].requirement_ids_json == ["skills.python", "skills.product"]
         assert all(not key.startswith("job.") for key in ledgers[0].requirement_ids_json)
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+def test_mapping_readiness_is_derived_from_revalidated_persisted_evidence_after_restart(
+    phase2_settings: Phase2Settings,
+) -> None:
+    service, coordinator, lock = _service(phase2_settings, ("skills.python",))
+    restarted = VerifiedJobAuthorizationService(
+        service._phase1_port,  # type: ignore[attr-defined]
+        service._activation_service,  # type: ignore[attr-defined]
+        coordinator,
+        now=lambda: _NOW,
+    )
+    try:
+        assert service.mapping_ready_job_revision_ids() == {"revision-1"}
+        assert restarted.mapping_ready_job_revision_ids() == {"revision-1"}
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+def test_mapping_readiness_rejects_adjacent_mandatory_evidence(
+    phase2_settings: Phase2Settings,
+) -> None:
+    service, coordinator, lock = _service(
+        phase2_settings,
+        ("skills.python",),
+        relation=EvidenceRelation.ADJACENT.value,
+    )
+    try:
+        assert service.mapping_ready_job_revision_ids() == set()
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+def test_verification_rejects_a_profile_location_missing_from_the_job_listing(
+    phase2_settings: Phase2Settings,
+) -> None:
+    service, coordinator, lock = _service(phase2_settings, ("skills.python",))
+    try:
+        with pytest.raises(ResumePreparationError, match="job listing"):
+            service.verify(
+                VerifyCandidateCommand(
+                    job_revision_id="revision-1",
+                    selected_location_path="Bengaluru",
+                    actor="tester",
+                    reason="verify",
+                    confirmation="VERIFY JOB FOR PHASE II PREPARATION",
+                    eligibility="eligible",
+                )
+            )
     finally:
         coordinator.dispose()
         lock.release()

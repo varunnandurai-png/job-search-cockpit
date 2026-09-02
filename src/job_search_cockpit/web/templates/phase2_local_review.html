@@ -145,7 +145,7 @@
                 <form method="post" action="/phase-2/verify">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <input type="hidden" name="job_revision_id" value="{{ candidate.job_revision_id }}">
-                  <input type="hidden" name="selected_location_path" value="{{ candidate.locations[0] }}">
+                  <input type="hidden" name="selected_location_path" value="{{ candidate.selected_location_path }}">
                   <input type="hidden" name="actor" value="Varun">
                   <label for="verification-reason-{{ loop.index }}">Reason</label>
                   <textarea id="verification-reason-{{ loop.index }}" name="reason" required></textarea>

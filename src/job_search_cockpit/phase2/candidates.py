@@ -142,6 +142,7 @@ class CandidateReview:
     gate_reason_codes: tuple[str, ...]
     confidence: ConfidenceState
     current: bool
+    selected_location_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +161,8 @@ class LocalManualMappingLaunch:
     authority: AssessmentAuthoritySnapshot
     logical_payload_digest: str
     expires_at: datetime
+    # Public listing clauses are transient display data, never Phase I career wording.
+    public_requirement_texts: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +226,12 @@ class CandidateWorkflowService:
             revision = session.get(Phase2JobRevision, job_revision_id)
             if revision is None or not _is_current(session, revision):
                 raise CandidateWorkflowUnavailable("The job revision is not current.")
+            if selected_location_path not in {
+                str(location) for location in revision.locations_json
+            }:
+                raise CandidateWorkflowUnavailable(
+                    "The selected location path does not belong to the job revision."
+                )
             review = _review(revision, inputs.profile.payload, True)
             if review.gate_result is not GateResult.PASS:
                 raise CandidateWorkflowUnavailable(
@@ -236,7 +245,21 @@ class CandidateWorkflowService:
             raise CandidateWorkflowUnavailable("The job has an uncertain mandatory requirement.")
         coverage = canonical_fingerprint([_requirement_payload(item) for item in requirements])
         attempt_id, nonce = str(uuid4()), str(uuid4())
-        query = _matching_query(revision.id, coverage, nonce, requirements)
+        preflight_scope_fingerprint = canonical_fingerprint(
+            {
+                "scope_version": "phase2.local-manual-preflight.v1",
+                "job_revision_id": revision.id,
+                "coverage_ledger_fingerprint": coverage,
+                "phase1_profile_generation": inputs.profile.active_profile_generation,
+                "phase1_authority_generation": inputs.readiness.authority_high_water_mark,
+                "phase1_restore_generation": inputs.readiness.restore_generation,
+                "phase2_activation_generation": view.activation_generation,
+                "phase2_restore_generation": view.restore_generation,
+            }
+        )
+        query = _matching_query(
+            revision.id, coverage, preflight_scope_fingerprint, requirements
+        )
         try:
             manifest = self._phase1_port.matching_retrieval_manifest(query)
             if (
@@ -277,10 +300,26 @@ class CandidateWorkflowService:
             ),
         )
         digest = Phase1ContractService.disclosure_payload_digest(manifest, context)
+        # The append-only Phase II attempt and its recovery witness are the
+        # prerequisite for Phase I authorization and wording release.
+        self._record_attempt(
+            attempt_id,
+            nonce,
+            attempt_id,
+            revision.id,
+            selected_location_path,
+            coverage,
+            manifest.fingerprint,
+            digest,
+            expires_at,
+            inputs,
+            view,
+        )
         authorization = self._phase1_port.authorize_matching_disclosure(
             Phase1DisclosureAuthorizationRequest(context=context, logical_payload_digest=digest)
         )
-        if authorization.state != "authorized":
+        if authorization.state != "authorized" or authorization.authorization_id != attempt_id:
+            self._terminal(attempt_id, "denied", "phase1_authorization_rejected")
             raise CandidateWorkflowUnavailable("The disclosure authorization is unavailable.")
         release = self._phase1_port.release_matching_wording(
             Phase1WordingReleaseRequest(
@@ -306,19 +345,6 @@ class CandidateWorkflowService:
             raise CandidateWorkflowUnavailable(
                 "Released wording does not match the approved manifest."
             )
-        self._record_attempt(
-            attempt_id,
-            nonce,
-            authorization.authorization_id,
-            revision.id,
-            selected_location_path,
-            coverage,
-            manifest.fingerprint,
-            digest,
-            expires_at,
-            inputs,
-            view,
-        )
         return LocalManualMappingLaunch(
             attempt_id,
             nonce,
@@ -342,6 +368,15 @@ class CandidateWorkflowService:
             authority,
             digest,
             expires_at,
+            tuple(
+                (
+                    requirement.requirement_id,
+                    revision.public_description[
+                        requirement.start_offset : requirement.end_offset
+                    ].strip(),
+                )
+                for requirement in requirements
+            ),
         )
 
     def publish_local_manual_mapping(
@@ -394,10 +429,7 @@ class CandidateWorkflowService:
             current_requirements = extract_public_requirements(revision)
         if current_requirements != launch.requirements:
             raise CandidateWorkflowUnavailable("The job requirements changed before publication.")
-        coverage = canonical_fingerprint(
-            [_requirement_payload(item) for item in launch.requirements]
-        )
-        query = _matching_query(launch.job_revision_id, coverage, launch.nonce, launch.requirements)
+        query = launch.manifest.query
         manifest = self._phase1_port.matching_retrieval_manifest(query)
         if (
             not manifest.complete
@@ -853,7 +885,11 @@ def extract_public_requirements(revision: Phase2JobRevision) -> tuple[Requiremen
         )
     if not requirements:
         raise CandidateWorkflowUnavailable("The public job description has no assessable clauses.")
-    return tuple(requirements[:32])
+    if len(requirements) > 32:
+        raise CandidateWorkflowUnavailable(
+            "The public job description exceeds the 32-requirement mapping budget."
+        )
+    return tuple(requirements)
 
 
 def _kind(text: str) -> RequirementKind:
@@ -884,7 +920,10 @@ def _component(text: str) -> ScoringComponent:
 
 
 def _matching_query(
-    revision_id: str, coverage: str, nonce: str, requirements: tuple[Requirement, ...]
+    revision_id: str,
+    coverage: str,
+    preflight_scope_fingerprint: str,
+    requirements: tuple[Requirement, ...],
 ) -> Phase1MatchingRequirementQuery:
     taxonomy = {
         ScoringComponent.ROLE: ("role_profile.senior_product_manager",),
@@ -931,7 +970,7 @@ def _matching_query(
         requirement_ids=tuple(item.requirement_id for item in requirements),
         job_revision_id=revision_id,
         coverage_ledger_fingerprint=coverage,
-        launch_session_fingerprint=sha256(nonce.encode()).hexdigest(),
+        launch_session_fingerprint=preflight_scope_fingerprint,
         requirements=predicates,
     )
 
@@ -951,6 +990,14 @@ def _review(
         gate, reasons = GateResult.FAIL, ["no_eligible_location"]
     elif revision.title not in profile.eligible_roles:
         gate, reasons = GateResult.UNKNOWN, ["role_requires_manual_review"]
+    selected_location_path = next(
+        (
+            str(location)
+            for location in revision.locations_json
+            if str(location) in profile.locations
+        ),
+        None,
+    )
     return CandidateReview(
         revision.id,
         revision.title,
@@ -960,6 +1007,7 @@ def _review(
         tuple(reasons or ["profile_gate_pass"]),
         ConfidenceState.HIGH if gate is GateResult.PASS else ConfidenceState.BLOCKED,
         current,
+        selected_location_path,
     )
 
 

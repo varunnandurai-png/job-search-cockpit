@@ -4,6 +4,7 @@ import httpx
 from sqlalchemy import select
 
 from job_search_cockpit.config import Settings
+from job_search_cockpit.phase1_contract.service import Phase1ContractUnavailable
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.application_drafts import (
     ApplicationDraftService,
@@ -38,6 +39,7 @@ from job_search_cockpit.phase2.resume_safety import (
     ResumePreparationService,
 )
 from job_search_cockpit.phase2.shortlist import AssessmentReviewService, SqlAssessmentReviewStore
+from job_search_cockpit.phase2.types import Phase2ActivationUnavailable
 from job_search_cockpit.phase2.verification import (
     CatalogVerifiedJobPreparationPort,
     VerifiedJobAuthorizationService,
@@ -68,7 +70,6 @@ class Phase2Runtime:
     local_manual_mapping_launches: dict[str, LocalManualMappingLaunch] = field(
         default_factory=dict
     )
-    locally_mapped_job_revision_ids: set[str] = field(default_factory=set)
 
     def remember_local_manual_mapping(self, launch: LocalManualMappingLaunch) -> None:
         self.local_manual_mapping_launches[launch.attempt_id] = launch
@@ -79,8 +80,13 @@ class Phase2Runtime:
     def forget_local_manual_mapping(self, attempt_id: str) -> None:
         self.local_manual_mapping_launches.pop(attempt_id, None)
 
-    def mark_locally_mapped(self, job_revision_id: str) -> None:
-        self.locally_mapped_job_revision_ids.add(job_revision_id)
+    @property
+    def locally_mapped_job_revision_ids(self) -> set[str]:
+        """Current mapping readiness is durable and revalidated on every read."""
+        try:
+            return self.verified_job_authorization_service.mapping_ready_job_revision_ids()
+        except (Phase1ContractUnavailable, Phase2ActivationUnavailable, ValueError):
+            return set()
 
     def current_candidate_source_urls(self) -> dict[str, str]:
         with self.coordinator._session_factory() as session:

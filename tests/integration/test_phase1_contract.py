@@ -470,7 +470,7 @@ def _disclosure_request(
         recipient_mode="local_manual",
         issued_at=issued_at,
         expires_at=expires_at or now + timedelta(minutes=10),
-        phase2_authorization_id="phase2-auth-1",
+        phase2_authorization_id=attempt_id,
         allowed_relations=("direct", "adjacent", "none"),
         allowed_reason_codes=("approved_evidence", "no_approved_evidence"),
     )
@@ -540,6 +540,7 @@ def test_disclosure_requires_exact_digest_releases_hash_verified_wording_and_blo
             )
 
         receipt = contract.authorize_matching_disclosure(request)
+        assert receipt.authorization_id == request.context.phase2_authorization_id
         assert contract.authorize_matching_disclosure(request) == receipt
         changed_context = request.context.model_copy(update={"nonce": "changed-nonce"})
         changed_request = Phase1DisclosureAuthorizationRequest(
