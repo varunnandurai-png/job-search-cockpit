@@ -60,6 +60,10 @@ from job_search_cockpit.phase2.assessment_types import (
     resolve_qualified_match_band,
 )
 from job_search_cockpit.phase2.eligibility import JobGateInput, evaluate_excluded_employer
+from job_search_cockpit.phase2.location_matching import (
+    listing_supports_profile_location,
+    select_profile_location,
+)
 from job_search_cockpit.phase2.models import (
     Phase2JobRevision,
     Phase2LocalManualMappingAttempt,
@@ -227,9 +231,9 @@ class CandidateWorkflowService:
             revision = session.get(Phase2JobRevision, job_revision_id)
             if revision is None or not _is_current(session, revision):
                 raise CandidateWorkflowUnavailable("The job revision is not current.")
-            if selected_location_path not in {
-                str(location) for location in revision.locations_json
-            }:
+            if not listing_supports_profile_location(
+                selected_location_path, revision.locations_json
+            ):
                 raise CandidateWorkflowUnavailable(
                     "The selected location path does not belong to the job revision."
                 )
@@ -451,7 +455,9 @@ class CandidateWorkflowService:
             revision = session.get(Phase2JobRevision, launch.job_revision_id)
             if revision is None or not _is_current(session, revision):
                 raise CandidateWorkflowUnavailable("The job revision is not current.")
-            if launch.selected_location_path not in {str(item) for item in revision.locations_json}:
+            if not listing_supports_profile_location(
+                launch.selected_location_path, revision.locations_json
+            ):
                 raise CandidateWorkflowUnavailable(
                     "The selected location does not belong to this job."
                 )
@@ -1047,24 +1053,17 @@ def _review(
 ) -> CandidateReview:
     reasons: list[str] = []
     gate = GateResult.PASS
+    selected_location_path = select_profile_location(revision.locations_json, profile.locations)
     if not revision.public_description.strip():
         gate, reasons = GateResult.FAIL, ["missing_public_description"]
     elif (
         evaluate_excluded_employer(profile, JobGateInput(revision.employer_name)) is GateResult.FAIL
     ):
         gate, reasons = GateResult.FAIL, ["excluded_employer"]
-    elif not set(str(item) for item in revision.locations_json) & set(profile.locations):
+    elif selected_location_path is None:
         gate, reasons = GateResult.FAIL, ["no_eligible_location"]
     elif revision.title not in profile.eligible_roles:
         gate, reasons = GateResult.UNKNOWN, ["role_requires_manual_review"]
-    selected_location_path = next(
-        (
-            str(location)
-            for location in revision.locations_json
-            if str(location) in profile.locations
-        ),
-        None,
-    )
     return CandidateReview(
         revision.id,
         revision.title,

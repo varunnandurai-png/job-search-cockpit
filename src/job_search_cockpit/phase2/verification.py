@@ -19,6 +19,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
 from job_search_cockpit.phase2.activation import Phase2ActivationService
 from job_search_cockpit.phase2.assessment_types import EvidenceRelation, RequirementKind
 from job_search_cockpit.phase2.config import Phase2Settings
+from job_search_cockpit.phase2.location_matching import listing_supports_profile_location
 from job_search_cockpit.phase2.models import (
     Phase2JobRecord,
     Phase2JobRevision,
@@ -96,9 +97,9 @@ class VerifiedJobAuthorizationService:
             revision = session.get(Phase2JobRevision, command.job_revision_id)
             if revision is None:
                 raise ResumePreparationError("The job revision is unavailable for verification.")
-            if command.selected_location_path.strip() not in {
-                str(location) for location in revision.locations_json
-            }:
+            if not listing_supports_profile_location(
+                command.selected_location_path, revision.locations_json
+            ):
                 raise ResumePreparationError(
                     "The selected location path does not belong to the job listing."
                 )
