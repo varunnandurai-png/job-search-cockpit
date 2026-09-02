@@ -1062,7 +1062,7 @@ def _review(
         gate, reasons = GateResult.FAIL, ["excluded_employer"]
     elif selected_location_path is None:
         gate, reasons = GateResult.FAIL, ["no_eligible_location"]
-    elif revision.title not in profile.eligible_roles:
+    elif not _is_approved_role_title(revision.title, profile.eligible_roles):
         gate, reasons = GateResult.UNKNOWN, ["role_requires_manual_review"]
     return CandidateReview(
         revision.id,
@@ -1074,6 +1074,13 @@ def _review(
         ConfidenceState.HIGH if gate is GateResult.PASS else ConfidenceState.BLOCKED,
         current,
         selected_location_path,
+    )
+
+
+def _is_approved_role_title(title: str, eligible_roles: tuple[str, ...]) -> bool:
+    return any(
+        title == role or (title.startswith(f"{role} (") and title.endswith(")"))
+        for role in eligible_roles
     )
 
 

@@ -34,3 +34,18 @@ def test_review_keeps_location_selection_when_description_is_missing() -> None:
     assert review.gate_result is GateResult.FAIL
     assert review.gate_reason_codes == ("missing_public_description",)
     assert review.selected_location_path == "Hyderabad"
+
+
+def test_review_accepts_parenthesized_specialization_of_approved_role() -> None:
+    revision = SimpleNamespace(
+        id="eltropy-integrations",
+        public_description="Public job description",
+        employer_name="Eltropy",
+        locations_json=["Hyderabad, Telangana, India"],
+        title="Senior Product Manager (Integrations)",
+    )
+
+    review = _review(revision, build_profile_v1(), current=True)
+
+    assert review.gate_result is GateResult.PASS
+    assert review.selected_location_path == "Hyderabad"
