@@ -129,6 +129,42 @@ class _FaultInjectingPhase1:
         return SimpleNamespace(state=request.state)
 
 
+class _BeginningPhase1(_FaultInjectingPhase1):
+    def __init__(
+        self,
+        manifest: Phase1MatchingRetrievalManifest,
+        start_failure: Literal["authorization", "release"],
+    ) -> None:
+        super().__init__(manifest)
+        self.start_failure = start_failure
+        self.inputs = _phase1_inputs()
+
+    def activation_inputs(self) -> Phase1ActivationInputs:
+        return self.inputs
+
+    def authorize_matching_disclosure(self, request: object) -> object:
+        if self.start_failure == "authorization":
+            raise RuntimeError("injected Phase I authorization failure")
+        context = request.context  # type: ignore[union-attr]
+        return Phase1FactDisclosureAuthorizationSnapshot(
+            authorization_id=context.phase2_authorization_id,
+            attempt_id=context.attempt_id,
+            nonce_sha256="a" * 64,
+            manifest_fingerprint=context.manifest_fingerprint,
+            logical_payload_digest=request.logical_payload_digest,  # type: ignore[union-attr]
+            disclosure_budget_epoch=1,
+            disclosure_policy_generation=1,
+            state="authorized",
+            expires_at=context.expires_at,
+            fingerprint="f" * 64,
+        )
+
+    def release_matching_wording(self, request: object) -> Phase1MatchingWordingRelease:
+        if self.start_failure == "release":
+            raise RuntimeError("injected Phase I release failure")
+        raise AssertionError("the injected release failure must be raised")
+
+
 class _WitnessAuthority:
     def persistence_fields(self) -> dict[str, str | int]:
         return _FENCE
@@ -702,6 +738,74 @@ def test_phase2_attempt_and_recovery_binding_exist_before_phase1_authorization(
         assert retry.logical_payload_digest != first.logical_payload_digest
         assert retry.manifest_fingerprint == first.manifest_fingerprint
         assert retry.manifest.query == first.manifest.query
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+@pytest.mark.parametrize("start_failure", ("authorization", "release"))
+def test_begin_mapping_settles_persisted_attempt_after_phase1_start_failure(
+    phase2_settings,
+    start_failure: Literal["authorization", "release"],
+) -> None:
+    upgrade_phase2_database(f"sqlite:///{phase2_settings.database_path}")
+    engine = create_phase2_engine(phase2_settings)
+    lock = Phase2InstanceLock.acquire(phase2_settings)
+    coordinator = Phase2MutationCoordinator(phase2_settings, engine, lock)
+    revision = _seed_candidate(coordinator)
+    requirements = extract_public_requirements(revision)
+    phase1 = _BeginningPhase1(_manifest(requirements[0]), start_failure)
+    phase1.inputs = phase1.inputs.model_copy(
+        update={
+            "profile": phase1.inputs.profile.model_copy(
+                update={
+                    "payload": phase1.inputs.profile.payload.model_copy(
+                        update={"eligible_roles": (revision.title,)}
+                    )
+                }
+            )
+        }
+    )
+    view = Phase2ActivationView("active", "", 1, 0, 0, "receipt-1", 1)
+
+    class Activation:
+        def revalidate_before(self, _action: object) -> Phase2ActivationView:
+            return view
+
+    class Publication:
+        def capture_authority(self) -> _WitnessAuthority:
+            return _WitnessAuthority()
+
+    service = CandidateWorkflowService(
+        phase1, Activation(), coordinator, Publication(), now=lambda: _NOW
+    )
+    try:
+        with pytest.raises(CandidateWorkflowUnavailable, match="could not be started safely"):
+            service.begin_local_manual_mapping(revision.id, "Hyderabad")
+
+        with coordinator._session_factory() as session:
+            attempt = session.scalar(select(Phase2LocalManualMappingAttempt))
+            assert attempt is not None
+            states = list(
+                session.scalars(
+                    select(Phase2LocalManualMappingAttemptEvent.state)
+                    .where(Phase2LocalManualMappingAttemptEvent.attempt_id == attempt.id)
+                    .order_by(Phase2LocalManualMappingAttemptEvent.sequence)
+                )
+            )
+        assert states == ["authorized", "indeterminate"]
+        assert phase1.lifecycle == ["indeterminate"]
+        terminal_events = [
+            entry.event
+            for entry in coordinator.recovery_ledger.read_all()
+            if entry.event.event_type == "local_manual_mapping_terminal"
+        ]
+        assert len(terminal_events) == 1
+        assert terminal_events[0].payload == {
+            "attempt_id": attempt.attempt_id,
+            "state": "indeterminate",
+            "reason_code": f"phase1_{start_failure}_unavailable",
+        }
     finally:
         coordinator.dispose()
         lock.release()

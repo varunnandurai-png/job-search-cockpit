@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -315,21 +316,46 @@ class CandidateWorkflowService:
             inputs,
             view,
         )
-        authorization = self._phase1_port.authorize_matching_disclosure(
-            Phase1DisclosureAuthorizationRequest(context=context, logical_payload_digest=digest)
-        )
-        if authorization.state != "authorized" or authorization.authorization_id != attempt_id:
-            self._terminal(attempt_id, "denied", "phase1_authorization_rejected")
-            raise CandidateWorkflowUnavailable("The disclosure authorization is unavailable.")
-        release = self._phase1_port.release_matching_wording(
-            Phase1WordingReleaseRequest(
-                authorization=authorization, attempt_id=attempt_id, nonce=nonce
+        try:
+            authorization = self._phase1_port.authorize_matching_disclosure(
+                Phase1DisclosureAuthorizationRequest(context=context, logical_payload_digest=digest)
             )
-        )
-        if (
-            release.logical_payload_digest != digest
-            or release.manifest_fingerprint != manifest.fingerprint
-        ):
+        except Exception as error:
+            self._settle_initial_failure(
+                attempt_id, digest, "indeterminate", "phase1_authorization_unavailable"
+            )
+            raise CandidateWorkflowUnavailable(
+                "The local mapping authorization could not be started safely."
+            ) from error
+        if authorization.state != "authorized" or authorization.authorization_id != attempt_id:
+            self._settle_initial_failure(
+                attempt_id, digest, "denied", "phase1_authorization_rejected"
+            )
+            raise CandidateWorkflowUnavailable("The disclosure authorization is unavailable.")
+        try:
+            release = self._phase1_port.release_matching_wording(
+                Phase1WordingReleaseRequest(
+                    authorization=authorization, attempt_id=attempt_id, nonce=nonce
+                )
+            )
+        except Exception as error:
+            self._settle_initial_failure(
+                attempt_id, digest, "indeterminate", "phase1_release_unavailable"
+            )
+            raise CandidateWorkflowUnavailable(
+                "The local mapping authorization could not be started safely."
+            ) from error
+        if release.logical_payload_digest != digest:
+            self._settle_initial_failure(
+                attempt_id, digest, "failed", "phase1_release_digest_mismatch"
+            )
+            raise CandidateWorkflowUnavailable(
+                "The released choices do not match the authorization."
+            )
+        if release.manifest_fingerprint != manifest.fingerprint:
+            self._settle_initial_failure(
+                attempt_id, digest, "failed", "phase1_release_manifest_mismatch"
+            )
             raise CandidateWorkflowUnavailable(
                 "The released choices do not match the authorization."
             )
@@ -342,6 +368,9 @@ class CandidateWorkflowService:
             != item.safe_wording_sha256
             for item in release.choices
         ):
+            self._settle_initial_failure(
+                attempt_id, digest, "failed", "phase1_release_wording_hash_mismatch"
+            )
             raise CandidateWorkflowUnavailable(
                 "Released wording does not match the approved manifest."
             )
@@ -822,8 +851,37 @@ class CandidateWorkflowService:
             )
         )
 
+    def _settle_initial_failure(
+        self,
+        attempt_id: str,
+        logical_payload_digest: str,
+        desired: _TerminalDisclosureState,
+        reason: str,
+    ) -> None:
+        """Seal a persisted launch when Phase I authorization or release is uncertain."""
+        terminal = desired
+        try:
+            lifecycle = self._phase1_port.record_disclosure_lifecycle(
+                Phase1DisclosureLifecycleRequest(
+                    authorization_id=attempt_id,
+                    logical_payload_digest=logical_payload_digest,
+                    state=desired,
+                    reason_code=reason,
+                )
+            )
+            if lifecycle.state in _TERMINAL_DISCLOSURE_STATES:
+                terminal = cast(_TerminalDisclosureState, lifecycle.state)
+            else:
+                terminal = "indeterminate"
+        except Exception:
+            terminal = "indeterminate"
+        # The Phase II terminal event is the durable no-replay boundary.
+        # A ledger append failure must still leave the user with a bounded error.
+        with suppress(Exception):
+            self._terminal(attempt_id, terminal, reason)
+
     def _terminal(self, attempt_id: str, state: str, reason: str) -> None:
-        def terminal(session: Session) -> None:
+        def terminal(session: Session) -> bool:
             record = session.scalar(
                 select(Phase2LocalManualMappingAttempt).where(
                     Phase2LocalManualMappingAttempt.attempt_id == attempt_id
@@ -833,7 +891,7 @@ class CandidateWorkflowService:
                 "authorized",
                 "consuming",
             }:
-                return
+                return False
             sequence = (
                 int(
                     session.scalar(
@@ -854,8 +912,17 @@ class CandidateWorkflowService:
                     reason_code=reason,
                 )
             )
+            return True
 
-        self._coordinator.run(terminal, f"local_manual_mapping_{state}")
+        if self._coordinator.run(terminal, f"local_manual_mapping_{state}"):
+            self._coordinator.recovery_ledger.append(
+                RecoveryEvent(
+                    str(uuid4()),
+                    "local_manual_mapping_terminal",
+                    {"attempt_id": attempt_id, "state": state, "reason_code": reason},
+                    self._now(),
+                )
+            )
 
 
 def extract_public_requirements(revision: Phase2JobRevision) -> tuple[Requirement, ...]:
