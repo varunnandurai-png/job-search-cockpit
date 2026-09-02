@@ -26,6 +26,7 @@ from job_search_cockpit.phase1_contract.snapshots import (
 from job_search_cockpit.phase2.assessment_types import (
     EvidenceRelation,
     Requirement,
+    ScoringComponent,
 )
 from job_search_cockpit.phase2.candidates import (
     CandidateWorkflowService,
@@ -412,7 +413,12 @@ def _manifest(requirement: Requirement) -> Phase1MatchingRetrievalManifest:
     )
 
 
-def _seed_candidate(coordinator: Phase2MutationCoordinator) -> Phase2JobRevision:
+def _seed_candidate(
+    coordinator: Phase2MutationCoordinator,
+    *,
+    description: str = "Product role required.",
+    locations: list[str] | None = None,
+) -> Phase2JobRevision:
     revision = Phase2JobRevision(
         id="revision-1",
         job_record_id="job-1",
@@ -420,9 +426,9 @@ def _seed_candidate(coordinator: Phase2MutationCoordinator) -> Phase2JobRevision
         canonical_url="https://jobs.example.test/1",
         title="Product role",
         employer_name="Example",
-        locations_json=["Hyderabad"],
+        locations_json=locations or ["Hyderabad"],
         posted_at=None,
-        public_description="Product role required.",
+        public_description=description,
         compensation_text=None,
         content_fingerprint="e" * 64,
         created_at=_NOW,
@@ -479,6 +485,7 @@ def _recovery_service(
     component_witness_corruption: Literal["none", "duplicate_name", "wrong_score"] = "none",
     none_mapping_identifiers: bool = False,
     selection_relation: EvidenceRelation = EvidenceRelation.DIRECT,
+    listing_locations: list[str] | None = None,
 ) -> tuple[
     CandidateWorkflowService,
     _FaultInjectingPhase1,
@@ -492,7 +499,7 @@ def _recovery_service(
     engine = create_phase2_engine(phase2_settings)  # type: ignore[arg-type]
     lock = Phase2InstanceLock.acquire(phase2_settings)  # type: ignore[arg-type]
     coordinator = Phase2MutationCoordinator(phase2_settings, engine, lock)  # type: ignore[arg-type]
-    revision = _seed_candidate(coordinator)
+    revision = _seed_candidate(coordinator, locations=listing_locations)
     requirements = extract_public_requirements(revision)
     assert len(requirements) == 1
     manifest = _manifest(requirements[0])
@@ -597,7 +604,9 @@ def test_phase2_attempt_and_recovery_binding_exist_before_phase1_authorization(
     engine = create_phase2_engine(phase2_settings)
     lock = Phase2InstanceLock.acquire(phase2_settings)
     coordinator = Phase2MutationCoordinator(phase2_settings, engine, lock)
-    revision = _seed_candidate(coordinator)
+    revision = _seed_candidate(
+        coordinator, description="Bring a thoughtful approach."
+    )
     inputs = _phase1_inputs().model_copy(
         update={
             "profile": _phase1_inputs().profile.model_copy(
@@ -732,12 +741,29 @@ def test_phase2_attempt_and_recovery_binding_exist_before_phase1_authorization(
     try:
         first = service.begin_local_manual_mapping(revision.id, "Hyderabad")
         retry = service.begin_local_manual_mapping(revision.id, "Hyderabad")
+        assert first.requirements[0].component is ScoringComponent.EVIDENCE
         assert first.phase1_authorization_id == first.attempt_id
         assert retry.attempt_id != first.attempt_id
         assert retry.nonce != first.nonce
         assert retry.logical_payload_digest != first.logical_payload_digest
         assert retry.manifest_fingerprint == first.manifest_fingerprint
         assert retry.manifest.query == first.manifest.query
+    finally:
+        coordinator.dispose()
+        lock.release()
+
+
+def test_publication_accepts_a_qualified_provider_location(phase2_settings) -> None:
+    service, phase1, publication, launch, selections, coordinator, lock = _recovery_service(
+        phase2_settings, listing_locations=["Hyderabad, Telangana, India"]
+    )
+    try:
+        assessment_id = service.publish_local_manual_mapping(launch, selections)
+
+        assert assessment_id
+        assert _attempt_state(coordinator) == "validated_response"
+        assert phase1.lifecycle == ["consuming", "validated_response"]
+        assert publication.calls == 1
     finally:
         coordinator.dispose()
         lock.release()

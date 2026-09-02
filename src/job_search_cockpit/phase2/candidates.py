@@ -243,11 +243,10 @@ class CandidateWorkflowService:
                     "The candidate has blocking or unresolved gates."
                 )
             requirements = extract_public_requirements(revision)
-        if not requirements or any(
-            item.kind is RequirementKind.REQUIRED and item.component is ScoringComponent.EVIDENCE
-            for item in requirements
-        ):
-            raise CandidateWorkflowUnavailable("The job has an uncertain mandatory requirement.")
+        if not requirements:
+            raise CandidateWorkflowUnavailable(
+                "The public job description has no assessable clauses."
+            )
         coverage = canonical_fingerprint([_requirement_payload(item) for item in requirements])
         attempt_id, nonce = str(uuid4()), str(uuid4())
         preflight_scope_fingerprint = canonical_fingerprint(
@@ -1282,7 +1281,9 @@ def _publication_guard(
     revision = session.get(Phase2JobRevision, launch.job_revision_id)
     if revision is None or not _is_current(session, revision):
         raise CandidateWorkflowUnavailable("The job revision is not current.")
-    if launch.selected_location_path not in {str(item) for item in revision.locations_json}:
+    if not listing_supports_profile_location(
+        launch.selected_location_path, revision.locations_json
+    ):
         raise CandidateWorkflowUnavailable("The selected location does not belong to this job.")
     if extract_public_requirements(revision) != launch.requirements:
         raise CandidateWorkflowUnavailable("The job requirements changed before publication.")
