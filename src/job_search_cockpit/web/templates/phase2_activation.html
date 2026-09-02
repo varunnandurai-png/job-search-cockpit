@@ -12,6 +12,13 @@
   {% endif %}
   <p>No job sources have been contacted. Job providers are not approved, and discovery, scoring, shortlists, documents, and applications remain disabled.</p>
 
+  {% if suspension_reason %}
+    <section aria-labelledby="activation-suspension">
+      <h2 id="activation-suspension">What changed</h2>
+      <p>{{ suspension_reason }}</p>
+    </section>
+  {% endif %}
+
   {% if blocker %}
     <section aria-labelledby="activation-blocker">
       <h2 id="activation-blocker">What needs attention</h2>
@@ -19,7 +26,7 @@
     </section>
   {% else %}
     <section aria-labelledby="activation-confirmation">
-      <h2 id="activation-confirmation">Enable setup</h2>
+      <h2 id="activation-confirmation">{% if state == "suspended" %}Reactivate setup{% else %}Enable setup{% endif %}</h2>
       <p>Type the confirmation below to record this reversible approval. This does not approve a provider or fetch a job.</p>
       <form method="post" action="/phase-2/activate">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -27,7 +34,7 @@
         <input id="confirmation" name="confirmation" required autocomplete="off">
         <label for="reason">Reason (optional)</label>
         <input id="reason" name="reason" autocomplete="off">
-        <button class="button button--primary" type="submit">Enable Phase II setup</button>
+        <button class="button button--primary" type="submit">{% if state == "suspended" %}Reactivate Phase II setup{% else %}Enable Phase II setup{% endif %}</button>
       </form>
     </section>
   {% endif %}

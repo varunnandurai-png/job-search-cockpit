@@ -150,7 +150,11 @@ def activation_page(request: Request) -> Response:
         context = {"state": "inactive", "blocker": "Phase II activation is unavailable."}
     else:
         view = service.validate_current()
-        context = {"state": view.state, "blocker": service.activation_blocker() or ""}
+        context = {
+            "state": view.state,
+            "blocker": service.activation_blocker() or "",
+            "suspension_reason": view.reason if view.state == "suspended" else "",
+        }
     response: Response = request.app.state.templates.TemplateResponse(
         request,
         "phase2_activation.html",

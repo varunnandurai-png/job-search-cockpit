@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from job_search_cockpit.phase1_contract.service import Phase1ContractService
 from job_search_cockpit.ports import PreparedVault
-from job_search_cockpit.storage.models import ImportRun, ImportRunSource
+from job_search_cockpit.storage.models import ImportRun, ImportRunSource, Phase1AuthorityState
 from tests.support.web import authenticated_test_app
 
 
@@ -101,3 +101,38 @@ def test_phase2_page_records_a_confirmed_setup_activation(vault_settings) -> Non
     assert "Enable setup" in before.text
     assert response.status_code == 303
     assert "Phase II is enabled for setup only" in after.text
+
+
+def test_suspended_phase2_page_offers_explicit_reactivation(vault_settings) -> None:
+    prepared_holder: dict[str, PreparedVault] = {}
+
+    def configure(prepared: PreparedVault) -> None:
+        _record_sanitized_phase1_acceptance(prepared)
+        prepared_holder["prepared"] = prepared
+
+    with authenticated_test_app(vault_settings, configure_prepared=configure) as client:
+        client.post("/phase-2/activate", data={"confirmation": "ENABLE PHASE II"})
+        prepared = prepared_holder["prepared"]
+
+        def change_readiness(session: object) -> None:
+            authority = session.get(Phase1AuthorityState, 1)
+            assert authority is not None
+            authority.readiness_generation += 1
+
+        prepared.coordinator.run(
+            change_readiness, "invalidate_phase2_activation_fixture", expected_version=None
+        )
+        page = client.get("/phase-2")
+        response = client.post(
+            "/phase-2/activate",
+            data={"confirmation": "ENABLE PHASE II", "reason": "Refresh approval"},
+            follow_redirects=False,
+        )
+        reactivated = client.get("/phase-2")
+
+    assert "Phase II is suspended" in page.text
+    assert "Phase I changed: The Phase I readiness generation changed." in page.text
+    assert "Reactivate setup" in page.text
+    assert 'action="/phase-2/activate"' in page.text
+    assert response.status_code == 303
+    assert "Phase II is enabled for setup only" in reactivated.text

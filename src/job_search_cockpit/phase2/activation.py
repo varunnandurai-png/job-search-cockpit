@@ -74,8 +74,6 @@ class Phase2ActivationService:
         view = self.activation_view()
         if view.state == "active":
             return None
-        if view.state == "suspended":
-            return view.reason or "Phase II is suspended and must be confirmed again."
         try:
             self.phase1_port.activation_inputs()
         except (Phase1ContractUnavailable, ValueError):
