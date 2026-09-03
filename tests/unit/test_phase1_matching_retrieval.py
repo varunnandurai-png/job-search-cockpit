@@ -145,3 +145,22 @@ def test_legacy_query_without_semantic_predicates_is_incomplete() -> None:
     assert result.complete is False
     assert result.choices == ()
     assert result.omission_reason_counts == (("semantic_predicates_missing", 1),)
+
+
+def test_retrieval_recognizes_profile_metadata_and_career_facts_as_complete() -> None:
+    query = _query((_requirement("job.required.1"),))
+    candidates = (
+        _candidate(1, "English full professional.", canonical_key="language.english-full-professional"),
+        _candidate(2, "Product owner cert.", canonical_key="certification.professional-scrum-product-owner"),
+        _candidate(3, "Total years.", canonical_key="profile.total_years"),
+        _candidate(4, "Hyderabad.", canonical_key="employment.company.location"),
+        _candidate(5, "Senior Product Manager.", canonical_key="employment.company.title"),
+        _candidate(6, "2020-2024.", canonical_key="employment.company.dates"),
+        _candidate(7, "Shipped product delivery across agile teams.", canonical_key="employment.company.shipped-product-delivery-agile"),
+    )
+
+    result = retrieve_matching_candidates(query, candidates)
+
+    assert result.complete is True
+    assert len(result.choices) == 1
+    assert result.choices[0].canonical_key == "employment.company.shipped-product-delivery-agile"

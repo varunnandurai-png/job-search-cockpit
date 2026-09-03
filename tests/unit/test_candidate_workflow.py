@@ -60,3 +60,11 @@ def test_extraction_blocks_a_listing_with_more_than_thirty_two_clauses() -> None
 
     with pytest.raises(CandidateWorkflowUnavailable, match="32"):
         extract_public_requirements(_revision(description))
+
+
+def test_bounded_extraction_caps_at_thirty_two_for_long_listings() -> None:
+    description = ". ".join(f"Requirement {index} is required" for index in range(45)) + "."
+    requirements = extract_public_requirements(_revision(description), bounded=True)
+
+    assert len(requirements) == 32
+    assert all(item.requirement_id.startswith("job.revision-1.requirement.") for item in requirements)
