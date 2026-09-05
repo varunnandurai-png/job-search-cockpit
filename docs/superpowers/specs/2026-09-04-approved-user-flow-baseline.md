@@ -3,6 +3,11 @@
 **Approved by:** Varun Nanduri
 
 **Approved on:** 4 September 2026
+
+**Amended by:** Varun Nanduri on 5 September 2026 to separate job fit from
+resume readiness, permit explicit continuation with disclosed resume gaps, and
+freeze the Release 1 application-platform catalogue.
+
 **Status:** Baseline for requirements, implementation, and acceptance reviews
 
 ## Completion rule
@@ -49,10 +54,11 @@ flowchart TD
     P --> Q{"14. Strong enough and fully supported?"}
     Q -- No --> R["Improve it using existing approved experience, or clearly show an unresolvable gap"]
     R -- Improved --> P
-    R -- Cannot resolve --> J
+    R -- Cannot resolve --> S
     Q -- Yes --> S["15. You review and approve the final resume"]
 
     S -- Request changes --> O
+    S -- Return to shortlist --> J
     S -- Approve --> T["16. Open the application in a visible browser"]
     T --> U["17. You sign in and complete any identity checks or CAPTCHAs"]
     U --> V["18. Fill approved answers and attach the tailored resume"]
@@ -68,16 +74,27 @@ flowchart TD
 
 ## Agreed operating decisions
 
-- Search runs automatically every Tuesday at 7:00 AM India time.
+- Search runs automatically every Tuesday at 7:00 AM India time. Its weekly
+  window ends the following Tuesday at 6:59:59 AM; catch-up occurs only within
+  that same window.
 - Sources cover LinkedIn, Naukri, Glassdoor, broader job-search results, and
   company career pages.
 - The system presents a ranked shortlist before preparing a resume.
 - Varun chooses which job continues to resume and application preparation.
+- A chosen 70–84 job may continue through resume approval and application
+  preparation. Its fit score does not change when resume wording improves, and
+  every unresolved gap remains visible for Varun's decision. For this workflow,
+  this supersedes the older Phase 2 rule that allowed only an 85+ job to proceed
+  to future drafting.
 - Only approved, truthful profile information may be used.
 - Missing, sensitive, uncertain, sign-in, one-time-code, and CAPTCHA steps
   remain with Varun.
 - The system fills the application and attaches the correct resume but stops
   before final submission.
+- Release 1 application coverage is fixed to LinkedIn Easy Apply, Naukri,
+  Glassdoor, Greenhouse, Lever, Workday, Indeed, SmartRecruiters, iCIMS, Oracle
+  Taleo, SAP SuccessFactors, and Ashby. A platform outside this catalogue stops
+  safely and is recorded as subsequent-release acceptance work.
 - After Varun submits, the system records confirmed success to prevent
   duplicate applications.
 
