@@ -168,6 +168,9 @@ def local_review_page(request: Request) -> Response:
     runtime = _runtime(request)
     status = runtime.discovery_service.status_view() if runtime is not None else None
     candidates, phase1_unavailable = _review_candidates(runtime)
+    error = request.query_params.get("error") or getattr(request.app.state, "launch_error", None)
+    if hasattr(request.app.state, "launch_error"):
+        request.app.state.launch_error = None
     response: Response = request.app.state.templates.TemplateResponse(
         request,
         "phase2_local_review.html",
@@ -175,6 +178,7 @@ def local_review_page(request: Request) -> Response:
             "csrf_token": request.app.state.launch_session.csrf_token,
             "discovery_status": status,
             "candidates": candidates,
+            "error": error,
             "phase1_unavailable": phase1_unavailable,
             "mapped_job_revision_ids": (
                 runtime.locally_mapped_job_revision_ids if runtime is not None else set()
@@ -241,7 +245,8 @@ async def begin_mapping(request: Request) -> Response:
         launch = runtime.candidate_workflow_service.begin_local_manual_mapping(
             revision_id, candidate.selected_location_path or ""
         )
-    except (CandidateWorkflowUnavailable, Phase2ActivationUnavailable, ValueError, IndexError):
+    except (CandidateWorkflowUnavailable, Phase2ActivationUnavailable, ValueError, IndexError) as error:
+        request.app.state.launch_error = str(error)
         return RedirectResponse("/phase-2/review", status_code=303)
     runtime.remember_local_manual_mapping(launch)
     return RedirectResponse(f"/phase-2/mapping-attempts/{launch.attempt_id}", status_code=303)

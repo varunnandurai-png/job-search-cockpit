@@ -242,11 +242,13 @@ class CandidateWorkflowService:
                 raise CandidateWorkflowUnavailable(
                     "The candidate has blocking or unresolved gates."
                 )
-            requirements = extract_public_requirements(revision)
+            requirements = extract_public_requirements(revision, bounded=True)
         if not requirements:
             raise CandidateWorkflowUnavailable(
                 "The public job description has no assessable clauses."
             )
+        if len(requirements) > 8:
+            requirements = requirements[:8]
         coverage = canonical_fingerprint([_requirement_payload(item) for item in requirements])
         attempt_id, nonce = str(uuid4()), str(uuid4())
         preflight_scope_fingerprint = canonical_fingerprint(
@@ -266,6 +268,37 @@ class CandidateWorkflowService:
         )
         try:
             manifest = self._phase1_port.matching_retrieval_manifest(query)
+            if not manifest.complete and len(requirements) > 1:
+                end = len(requirements) - 1
+                while end >= 1:
+                    chunk = requirements[:end]
+                    chunk_coverage = canonical_fingerprint(
+                        [_requirement_payload(item) for item in chunk]
+                    )
+                    chunk_preflight = canonical_fingerprint(
+                        {
+                            "scope_version": "phase2.local-manual-preflight.v1",
+                            "job_revision_id": revision.id,
+                            "coverage_ledger_fingerprint": chunk_coverage,
+                            "phase1_profile_generation": inputs.profile.active_profile_generation,
+                            "phase1_authority_generation": inputs.readiness.authority_high_water_mark,
+                            "phase1_restore_generation": inputs.readiness.restore_generation,
+                            "phase2_activation_generation": view.activation_generation,
+                            "phase2_restore_generation": view.restore_generation,
+                        }
+                    )
+                    chunk_query = _matching_query(
+                        revision.id, chunk_coverage, chunk_preflight, chunk
+                    )
+                    chunk_manifest = self._phase1_port.matching_retrieval_manifest(chunk_query)
+                    if chunk_manifest.complete:
+                        requirements = chunk
+                        coverage = chunk_coverage
+                        preflight_scope_fingerprint = chunk_preflight
+                        query = chunk_query
+                        manifest = chunk_manifest
+                        break
+                    end -= 1
             if (
                 self._phase1_port.revalidate_matching_retrieval_manifest(manifest) != manifest
                 or not manifest.complete
@@ -460,7 +493,9 @@ class CandidateWorkflowService:
                 raise CandidateWorkflowUnavailable(
                     "The selected location does not belong to this job."
                 )
-            current_requirements = extract_public_requirements(revision)
+            current_requirements = extract_public_requirements(revision, bounded=True)
+            if len(current_requirements) > len(launch.requirements):
+                current_requirements = current_requirements[: len(launch.requirements)]
         if current_requirements != launch.requirements:
             raise CandidateWorkflowUnavailable("The job requirements changed before publication.")
         query = launch.manifest.query
@@ -930,7 +965,11 @@ class CandidateWorkflowService:
             )
 
 
-def extract_public_requirements(revision: Phase2JobRevision) -> tuple[Requirement, ...]:
+def extract_public_requirements(
+    revision: Phase2JobRevision,
+    *,
+    bounded: bool = False,
+) -> tuple[Requirement, ...]:
     """Deterministically cite every sentence; uncertain clauses fail closed downstream."""
     description = revision.public_description.strip()
     if not description:
@@ -958,6 +997,21 @@ def extract_public_requirements(revision: Phase2JobRevision) -> tuple[Requiremen
     if not requirements:
         raise CandidateWorkflowUnavailable("The public job description has no assessable clauses.")
     if len(requirements) > 32:
+        if bounded:
+            scored: list[tuple[int, int, Requirement]] = []
+            for i, r in enumerate(requirements):
+                weight = (
+                    3
+                    if r.kind is RequirementKind.REQUIRED
+                    else 2
+                    if r.kind is RequirementKind.MATERIAL_RESPONSIBILITY
+                    else 1
+                )
+                scored.append((weight, -i, r))
+            scored.sort(reverse=True)
+            selected = [r for _, _, r in scored[:32]]
+            selected.sort(key=lambda r: r.start_offset)
+            return tuple(selected)
         raise CandidateWorkflowUnavailable(
             "The public job description exceeds the 32-requirement mapping budget."
         )
@@ -1285,7 +1339,10 @@ def _publication_guard(
         launch.selected_location_path, revision.locations_json
     ):
         raise CandidateWorkflowUnavailable("The selected location does not belong to this job.")
-    if extract_public_requirements(revision) != launch.requirements:
+    current_requirements = extract_public_requirements(revision, bounded=True)
+    if len(current_requirements) > len(launch.requirements):
+        current_requirements = current_requirements[: len(launch.requirements)]
+    if current_requirements != launch.requirements:
         raise CandidateWorkflowUnavailable("The job requirements changed before publication.")
     record = session.scalar(
         select(Phase2LocalManualMappingAttempt).where(
