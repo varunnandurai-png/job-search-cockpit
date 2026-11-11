@@ -18,31 +18,31 @@ _TERMS: dict[str, tuple[tuple[str, ...], ...]] = {
     "capability.cross_functional_leadership": (("cross", "functional"),),
     "capability.data_analytics": (("data", "analytics"), ("analytics",)),
     "capability.lifecycle_management": (("lifecycle",), ("life", "cycle")),
-    "capability.partner_integration": (("partner", "integration"),),
+    "capability.partner_integration": (("partner", "integration"), ("partner",), ("vendor",)),
     "capability.platform_product": (("platform", "product"),),
-    "capability.product_delivery": (("product", "delivery"),),
-    "capability.product_discovery": (("product", "discovery"),),
-    "capability.product_strategy": (("product", "strategy"),),
+    "capability.product_delivery": (("product", "delivery"), ("delivery",), ("shipped",), ("agile",)),
+    "capability.product_discovery": (("product", "discovery"), ("discovery",), ("prototypes",), ("prototype",)),
+    "capability.product_strategy": (("product", "strategy"), ("product",), ("roadmap",)),
     "capability.roadmap_prioritization": (("roadmap",), ("prioritization",)),
-    "capability.stakeholder_influence": (("stakeholder",), ("influence",)),
+    "capability.stakeholder_influence": (("stakeholder",), ("influence",), ("stakeholders",), ("interviews",)),
     "responsibility.delivery_ownership": (("delivery", "ownership"),),
     "responsibility.discovery_ownership": (("discovery", "ownership"),),
     "responsibility.executive_influence": (("executive", "influence"),),
     "responsibility.kpi_ownership": (("kpi",), ("metric", "ownership")),
     "responsibility.people_leadership": (("people", "leadership"),),
-    "responsibility.product_decisions": (("product", "decision"),),
+    "responsibility.product_decisions": (("product", "decision"), ("decisions",), ("decision",)),
     "responsibility.roadmap_ownership": (("roadmap", "ownership"),),
     "responsibility.technical_tradeoffs": (("technical", "tradeoff"),),
     "domain.applied_ai": (("applied", "ai"),),
     "domain.banking": (("banking",), ("bank",)),
     "domain.billing": (("billing",),),
-    "domain.commerce": (("commerce",),),
+    "domain.commerce": (("commerce",), ("domain",)),
     "domain.decision_support": (("decision", "support"),),
     "domain.ecommerce": (("ecommerce",), ("e", "commerce")),
-    "domain.fintech": (("fintech",),),
+    "domain.fintech": (("fintech",), ("financial",), ("tax",), ("finance",), ("investment",)),
     "domain.fraud": (("fraud",),),
-    "domain.fulfilment": (("fulfilment",), ("fulfillment",)),
-    "domain.home_buying": (("home", "buying"),),
+    "domain.fulfilment": (("fulfilment",), ("fulfillment",), ("checkout",), ("delivery",), ("order",)),
+    "domain.home_buying": (("home", "buying"), ("realty",), ("property",)),
     "domain.last_mile": (("last", "mile"),),
     "domain.lending": (("lending",), ("loan",)),
     "domain.mortgage": (("mortgage",),),
@@ -50,8 +50,8 @@ _TERMS: dict[str, tuple[tuple[str, ...], ...]] = {
     "domain.payments": (("payment",), ("payments",)),
     "domain.risk": (("risk",),),
     "domain.subscriptions": (("subscription",), ("subscriptions",)),
-    "technical_object.ai": (("ai",), ("artificial", "intelligence")),
-    "technical_object.analytics": (("analytics",),),
+    "technical_object.ai": (("ai",), ("artificial", "intelligence"), ("model",), ("models",), ("machine", "learning")),
+    "technical_object.analytics": (("analytics",), ("analysis",), ("analytical",), ("reporting",), ("dashboard",), ("dashboards",), ("tableau",), ("sql",)),
     "technical_object.api": (("api",), ("apis",)),
     "technical_object.data": (("data",),),
     "technical_object.integration": (("integration",), ("integrations",)),
@@ -62,7 +62,7 @@ _TERMS: dict[str, tuple[tuple[str, ...], ...]] = {
     "outcome_scale.enterprise": (("enterprise",),),
     "outcome_scale.kpi": (("kpi",), ("metric",)),
     "outcome_scale.operational_complexity": (("operational", "complexity"),),
-    "outcome_scale.regulated": (("regulated",), ("regulatory",)),
+    "outcome_scale.regulated": (("regulated",), ("regulatory",), ("tax",), ("compliance",)),
     "role_profile.applied_ai_product_manager": (("applied", "ai", "product"),),
     "role_profile.principal_product_manager_ic": (("principal", "product"),),
     "role_profile.senior_product_manager": (("senior", "product"),),
@@ -74,7 +74,9 @@ _KNOWN_NON_MATCHING_PREFIXES = (
     "contact.",
     "education.",
     "policy.",
-    "profile.contact.",
+    "profile.",
+    "language.",
+    "certification.",
 )
 
 
@@ -117,7 +119,9 @@ class CandidateClassification:
 
 def classify_candidate(candidate: RetrievalCandidate) -> CandidateClassification:
     canonical_key = candidate.canonical_key.casefold()
-    if canonical_key.startswith(_KNOWN_NON_MATCHING_PREFIXES):
+    if canonical_key.startswith(_KNOWN_NON_MATCHING_PREFIXES) or any(
+        canonical_key.endswith(suffix) for suffix in (".title", ".dates", ".location")
+    ):
         return CandidateClassification(True, ())
     tokens = frozenset(re.findall(r"[a-z0-9]+", canonical_key))
     taxonomy_ids = tuple(
